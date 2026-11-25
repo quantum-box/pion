@@ -1,6 +1,6 @@
 [package]
 name = "cargo-pion"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 description = "Select the tests a change can affect, from the Cargo dependency graph"
 license = "MIT"

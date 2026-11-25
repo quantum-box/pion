@@ -264,6 +264,17 @@ to one of them. Use it before deploying one binary of a workspace that has
 several: a test of a crate the binary does not contain says nothing about
 that deployment.
 
+What `api` is built from is judged as it ships: with its default features,
+and the features those turn on in its dependencies. An optional dependency
+nothing turns on is not part of the binary. So a `Cargo.lock` change to a
+package `api` does not ship selects nothing, and a crate is selected with a
+feature only when `api`'s build turns that feature on. A crate that is
+selected for another reason, such as a changed file, is selected as before.
+With several `--for-package`, the binaries' features are taken together.
+Without `--for-package`, a lock change selects every crate that some
+feature of its own can build the package with (see
+[How a change spreads](#how-a-change-spreads)).
+
 ```bash
 cargo pion plan --base "$LAST_DEPLOYED" --for-package api --format cargo-test
 ```
@@ -272,8 +283,8 @@ cargo pion plan --base "$LAST_DEPLOYED" --for-package api --format cargo-test
 
 `cargo pion reach` answers a different question from `plan`: does the change
 alter the binary built from this crate? It follows the crate's normal and
-build dependencies only, and leaves out the parts of a crate that are never
-shipped.
+build dependencies only, built with its default features, and leaves out the
+parts of a crate that are never shipped.
 
 ```bash
 cargo pion reach --base "$LAST_DEPLOYED" --package api --package worker --format json
@@ -292,7 +303,7 @@ cargo pion reach --base "$LAST_DEPLOYED" --package api --package worker --format
 | Changed file | Reaches the crate when |
 | --- | --- |
 | A file of a workspace crate | The binary is built from that crate, and the file is not under the crate's `tests/`, `benches/` or `examples/` |
-| `Cargo.lock` | The set of external packages the crate resolves with differs between the two revisions |
+| `Cargo.lock` | The set of external packages the crate resolves with differs between the two revisions, in a package the binary is built with. A package behind an optional dependency the default features leave off does not count; one that is gone from the working tree's dependency graph does |
 | The root `Cargo.toml` | An entry of `[workspace.dependencies]` that differs names a package the binary is built from. A change to anything but that table and the member lists reaches every crate |
 | `rust-toolchain.toml`, `clippy.toml`, `.cargo/` | Always |
 | A file no workspace crate owns | Never. It is listed under `outside`, for the caller to match against its own rules (a Dockerfile, a workflow) |

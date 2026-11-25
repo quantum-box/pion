@@ -696,6 +696,14 @@ fn select(args: &Selecting) -> Result<(ChangeSet, TestPlan), Failure> {
         read_source,
     )?;
 
+    let mut deployables = BTreeSet::new();
+    for name in &args.for_packages {
+        let package = graph
+            .package(name)
+            .ok_or_else(|| format!("`{name}` is not a crate of this workspace"))?;
+        deployables.insert(package);
+    }
+
     let changes = ChangeSet::classify(paths, &graph);
     let mut planner = Planner::new(&graph).with_scenarios(&scenarios, &scenario_roots);
     if let Some(change) = &lock_change {
@@ -710,15 +718,12 @@ fn select(args: &Selecting) -> Result<(ChangeSet, TestPlan), Failure> {
             lines: &lines,
         });
     }
+    if !deployables.is_empty() {
+        planner = planner.for_deployables(&deployables);
+    }
     let mut plan = planner.plan(&changes)?;
-    if !args.for_packages.is_empty() {
-        let mut built_from = BTreeSet::new();
-        for name in &args.for_packages {
-            let package = graph
-                .package(name)
-                .ok_or_else(|| format!("`{name}` is not a crate of this workspace"))?;
-            built_from.extend(graph.built_from(&package)?);
-        }
+    if !deployables.is_empty() {
+        let built_from = graph.shipped(&deployables)?.crates();
         plan.restrict_to(&built_from, |scenario| {
             graph
                 .owner_of(scenario)

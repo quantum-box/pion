@@ -3,7 +3,8 @@
 //! A test plan asks which tests can observe a change. A release asks a
 //! different question: does the change alter the binary built from this
 //! crate? The answer follows the crate's normal and build dependencies only,
-//! and leaves out the parts of a crate that are never shipped.
+//! built with its default features, and leaves out the parts of a crate that
+//! are never shipped.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -115,7 +116,7 @@ impl<'a> Reach<'a> {
                 match &file.kind {
                     FileKind::Outside => {}
                     FileKind::WorkspaceGlobal if lockfile.as_ref() == Some(path) => {
-                        reasons.extend(self.lock_reasons(package, path));
+                        reasons.extend(self.lock_reasons(package, &names, path));
                     }
                     FileKind::WorkspaceGlobal if root_manifest.as_ref() == Some(path) => {
                         match self.manifest_change {
@@ -161,8 +162,14 @@ impl<'a> Reach<'a> {
     }
 
     /// The external packages `package` is resolved with at one revision and
-    /// not, or differently, at the other.
-    fn lock_reasons(&self, package: &PackageName, path: &RepoPath) -> BTreeSet<ReachReason> {
+    /// not, or differently, at the other, among those its binary is built
+    /// with. `shipped` names every package the binary is built from.
+    fn lock_reasons(
+        &self,
+        package: &PackageName,
+        shipped: &BTreeSet<String>,
+        path: &RepoPath,
+    ) -> BTreeSet<ReachReason> {
         let global = || BTreeSet::from([ReachReason::WorkspaceGlobal { path: path.clone() }]);
         let Some(locks) = &self.locks else {
             return global();
@@ -178,8 +185,15 @@ impl<'a> Reach<'a> {
         ) else {
             return global();
         };
+        // The lockfile lists optional dependencies whether or not a feature
+        // turns them on. A package the graph knows by name but the binary is
+        // not built with is not shipped; one it does not know at all is gone
+        // at this revision and may have been shipped before, so it counts.
         before
             .symmetric_difference(&after)
+            .filter(|external| {
+                shipped.contains(&external.name) || !self.graph.has_package_named(&external.name)
+            })
             .map(|external| ReachReason::LockChanged {
                 name: external.name.clone(),
                 version: external.version.clone(),

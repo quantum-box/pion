@@ -124,6 +124,7 @@ pub struct Planner<'a> {
     graph: &'a WorkspaceGraph,
     lock_change: Option<&'a LockChange>,
     manifest_change: Option<&'a ManifestChange>,
+    deployables: Option<&'a BTreeSet<PackageName>>,
     narrowing: Option<Narrowing<'a>>,
     scenarios: &'a [Scenario],
     scenario_roots: &'a [RepoPath],
@@ -135,6 +136,7 @@ impl<'a> Planner<'a> {
             graph,
             lock_change: None,
             manifest_change: None,
+            deployables: None,
             narrowing: None,
             scenarios: &[],
             scenario_roots: &[],
@@ -152,6 +154,16 @@ impl<'a> Planner<'a> {
     /// the `[workspace.dependencies]` entries it touches.
     pub fn with_manifest_change(mut self, change: &'a ManifestChange) -> Self {
         self.manifest_change = Some(change);
+        self
+    }
+
+    /// Judges a `Cargo.lock` change by what these binaries ship, built with
+    /// their default features: a changed package they do not contain selects
+    /// nothing, and a crate is selected only with features they turn on.
+    /// For a plan that tests one deployable; it does not drop crates the
+    /// binaries are not built from (see [`TestPlan::restrict_to`]).
+    pub fn for_deployables(mut self, packages: &'a BTreeSet<PackageName>) -> Self {
+        self.deployables = Some(packages);
         self
     }
 
@@ -359,11 +371,17 @@ impl<'a> Planner<'a> {
         let Some(LockChange::Packages(packages)) = self.lock_change else {
             return Ok(false);
         };
+        let shipped = match self.deployables {
+            Some(packages) => Some(self.graph.shipped(packages)?),
+            None => None,
+        };
         let mut selected = Vec::new();
         for package in packages {
-            let dependents = self
-                .graph
-                .dependents_of_external(&package.name, &package.version)?;
+            let dependents = self.graph.dependents_of_external(
+                &package.name,
+                &package.version,
+                shipped.as_ref(),
+            )?;
             // A package the graph does not know cannot be traced.
             let Some(dependents) = dependents else {
                 return Ok(false);

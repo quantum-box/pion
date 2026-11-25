@@ -163,10 +163,15 @@ impl WorkspaceGraph {
     /// is not built from it by default. Such a crate is listed with the
     /// features of its own that turn the dependency on, and a crate none of
     /// whose features do is left out: its tests never build the package.
+    ///
+    /// With `shipped`, only what those binaries contain counts: a package
+    /// they do not ship has no dependents, and a crate is listed only with
+    /// features the binaries turn on for it.
     pub fn dependents_of_external(
         &self,
         name: &str,
         version: &str,
+        shipped: Option<&Shipped<'_>>,
     ) -> Result<Option<BTreeMap<PackageName, Activation>>, WorkspaceError> {
         let mut dependents = BTreeMap::new();
         let mut found = false;
@@ -175,8 +180,13 @@ impl WorkspaceGraph {
                 continue;
             }
             found = true;
+            if let Some(shipped) = shipped
+                && !shipped.features.contains_package(package.id())?
+            {
+                continue;
+            }
             for dependent in self.tests_built_from(package.id())? {
-                let Some(activation) = self.activation(&dependent, package.id())? else {
+                let Some(activation) = self.activation(&dependent, package.id(), shipped)? else {
                     continue;
                 };
                 match dependents.get(&dependent) {
@@ -193,7 +203,9 @@ impl WorkspaceGraph {
     }
 
     /// Which features of the workspace crate `dependent` its tests need to be
-    /// built from `target`, or `None` when no feature of it does.
+    /// built from `target`, or `None` when no feature of it does. With
+    /// `shipped`, only the features those binaries turn on for `dependent`
+    /// are candidates.
     ///
     /// When several single features do, the one that turns on the fewest
     /// features in all is taken: it is the narrowest build that still
@@ -203,20 +215,12 @@ impl WorkspaceGraph {
         &self,
         dependent: &PackageName,
         target: &PackageId,
+        shipped: Option<&Shipped<'_>>,
     ) -> Result<Option<Activation>, WorkspaceError> {
-        let id = self
-            .ids
-            .get(dependent)
-            .ok_or_else(|| WorkspaceError::UnknownPackage(dependent.clone()))?;
+        let id = self.id(dependent)?;
         let metadata = self.graph.metadata(id)?;
         let feature_graph = self.graph.feature_graph();
-        let defaults: Vec<FeatureId<'_>> = self
-            .graph
-            .query_forward([id])?
-            .to_feature_query(StandardFeatures::Default)
-            .initials()
-            .feature_ids(DependencyDirection::Forward)
-            .collect();
+        let defaults = self.default_features(id)?;
         let resolve = |extra: &[&str]| -> Result<FeatureSet<'_>, WorkspaceError> {
             let initials = defaults
                 .iter()
@@ -231,9 +235,19 @@ impl WorkspaceGraph {
         if resolve(&[])?.contains_package(target)? {
             return Ok(Some(Activation::Default));
         }
+        let shipped_features = match shipped {
+            Some(shipped) => Some(shipped.features.features_for(id)?),
+            None => None,
+        };
         let features: Vec<&str> = metadata
             .named_features()
             .filter(|feature| *feature != "default")
+            .filter(|feature| match &shipped_features {
+                Some(list) => list
+                    .as_ref()
+                    .is_some_and(|list| list.has_named_feature(feature)),
+                None => true,
+            })
             .collect();
         let mut best: Option<(usize, &str)> = None;
         for feature in &features {
@@ -253,46 +267,70 @@ impl WorkspaceGraph {
         Ok(None)
     }
 
+    /// What the binaries of `packages` are built from, built as shipped:
+    /// with their default features, through normal and build dependencies,
+    /// following only the optional dependencies those features turn on.
+    pub fn shipped(&self, packages: &BTreeSet<PackageName>) -> Result<Shipped<'_>, WorkspaceError> {
+        let mut initials = Vec::new();
+        for package in packages {
+            initials.extend(self.default_features(self.id(package)?)?);
+        }
+        let features = self
+            .graph
+            .feature_graph()
+            .query_forward(initials)?
+            .resolve_with_fn(|_, link| !link.dev_only());
+        Ok(Shipped { features })
+    }
+
     /// The workspace crates `package` is built from: itself and everything it
-    /// depends on through normal and build dependencies. Its
-    /// dev-dependencies are not part of what gets shipped, so they are left
-    /// out.
+    /// ships, as [`shipped`](Self::shipped) follows it. Its dev-dependencies
+    /// are not part of what gets shipped, so they are left out.
     pub fn built_from(
         &self,
         package: &PackageName,
     ) -> Result<BTreeSet<PackageName>, WorkspaceError> {
-        let id = self
-            .ids
-            .get(package)
-            .ok_or_else(|| WorkspaceError::UnknownPackage(package.clone()))?;
-        let closure = self
-            .graph
-            .query_forward([id])?
-            .resolve_with_fn(|_, link| !link.dev_only());
-        Ok(closure
-            .packages(DependencyDirection::Forward)
+        Ok(self
+            .shipped(&BTreeSet::from([package.clone()]))?
+            .packages()
             .filter(|dependency| dependency.in_workspace())
             .map(|dependency| PackageName(dependency.name().to_owned()))
             .collect())
     }
 
     /// The names of every package `package` is built from, workspace crates
-    /// and external packages alike, through normal and build dependencies.
+    /// and external packages alike, as [`shipped`](Self::shipped) follows it.
     pub fn built_from_names(
         &self,
         package: &PackageName,
     ) -> Result<BTreeSet<String>, WorkspaceError> {
-        let id = self
-            .ids
+        Ok(self.shipped(&BTreeSet::from([package.clone()]))?.names())
+    }
+
+    /// Whether the dependency graph has a package called `name`, at any
+    /// version, whether or not a feature turns it on.
+    pub fn has_package_named(&self, name: &str) -> bool {
+        self.graph.packages().any(|package| package.name() == name)
+    }
+
+    fn id(&self, package: &PackageName) -> Result<&PackageId, WorkspaceError> {
+        self.ids
             .get(package)
-            .ok_or_else(|| WorkspaceError::UnknownPackage(package.clone()))?;
-        let closure = self
+            .ok_or_else(|| WorkspaceError::UnknownPackage(package.clone()))
+    }
+
+    /// The base feature and the default features of a package: what
+    /// `cargo build -p` turns on.
+    fn default_features<'g>(
+        &'g self,
+        id: &'g PackageId,
+    ) -> Result<Vec<FeatureId<'g>>, WorkspaceError> {
+        Ok(self
             .graph
             .query_forward([id])?
-            .resolve_with_fn(|_, link| !link.dev_only());
-        Ok(closure
-            .packages(DependencyDirection::Forward)
-            .map(|dependency| dependency.name().to_owned())
+            .to_feature_query(StandardFeatures::Default)
+            .initials()
+            .feature_ids(DependencyDirection::Forward)
             .collect())
     }
 
@@ -337,6 +375,35 @@ impl WorkspaceGraph {
             }
         }
         Ok(crates)
+    }
+}
+
+/// The features some binaries are built with, and so the packages they
+/// contain. See [`WorkspaceGraph::shipped`].
+pub struct Shipped<'g> {
+    features: FeatureSet<'g>,
+}
+
+impl<'g> Shipped<'g> {
+    fn packages(&self) -> impl Iterator<Item = guppy::graph::PackageMetadata<'g>> + '_ {
+        self.features
+            .packages_with_features(DependencyDirection::Forward)
+            .map(|list| *list.package())
+    }
+
+    /// The names of the packages the binaries contain.
+    pub fn names(&self) -> BTreeSet<String> {
+        self.packages()
+            .map(|package| package.name().to_owned())
+            .collect()
+    }
+
+    /// The workspace crates the binaries contain.
+    pub fn crates(&self) -> BTreeSet<PackageName> {
+        self.packages()
+            .filter(|package| package.in_workspace())
+            .map(|package| PackageName(package.name().to_owned()))
+            .collect()
     }
 }
 
