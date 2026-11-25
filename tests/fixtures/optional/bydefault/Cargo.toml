@@ -1,0 +1,12 @@
+[package]
+name = "op-bydefault"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+ext = { path = "../ext", optional = true }
+
+[features]
+default = ["with-ext"]
+with-ext = ["dep:ext"]

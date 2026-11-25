@@ -1,0 +1,8 @@
+[package]
+name = "op-plain"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+op-eval = { path = "../eval" }

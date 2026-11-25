@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use camino::{Utf8Path, Utf8PathBuf};
+use guppy::graph::feature::{FeatureId, FeatureSet, StandardFeatures};
 use guppy::graph::{DependencyDirection, PackageGraph};
 use guppy::{MetadataCommand, PackageId};
 use serde::{Deserialize, Serialize};
@@ -154,23 +155,102 @@ impl WorkspaceGraph {
     }
 
     /// The workspace crates whose tests are built from the external package
-    /// `name` at `version`, or `None` when the dependency graph has no such
-    /// package.
+    /// `name` at `version`, with the features each needs for that, or `None`
+    /// when the dependency graph has no such package.
+    ///
+    /// `cargo metadata` lists optional dependencies whether or not a feature
+    /// turns them on, so a crate that reaches the package only through one
+    /// is not built from it by default. Such a crate is listed with the
+    /// features of its own that turn the dependency on, and a crate none of
+    /// whose features do is left out: its tests never build the package.
     pub fn dependents_of_external(
         &self,
         name: &str,
         version: &str,
-    ) -> Result<Option<BTreeSet<PackageName>>, WorkspaceError> {
-        let mut dependents = BTreeSet::new();
+    ) -> Result<Option<BTreeMap<PackageName, Activation>>, WorkspaceError> {
+        let mut dependents = BTreeMap::new();
         let mut found = false;
         for package in self.graph.packages() {
             if package.name() != name || package.version().to_string() != version {
                 continue;
             }
             found = true;
-            dependents.extend(self.tests_built_from(package.id())?);
+            for dependent in self.tests_built_from(package.id())? {
+                let Some(activation) = self.activation(&dependent, package.id())? else {
+                    continue;
+                };
+                match dependents.get(&dependent) {
+                    // Two packages of the same name and version, from
+                    // different sources: one reached by default is enough.
+                    Some(Activation::Default) => {}
+                    _ => {
+                        dependents.insert(dependent, activation);
+                    }
+                }
+            }
         }
         Ok(found.then_some(dependents))
+    }
+
+    /// Which features of the workspace crate `dependent` its tests need to be
+    /// built from `target`, or `None` when no feature of it does.
+    ///
+    /// When several single features do, the one that turns on the fewest
+    /// features in all is taken: it is the narrowest build that still
+    /// includes `target`. When no single feature does but all together do,
+    /// all are taken.
+    fn activation(
+        &self,
+        dependent: &PackageName,
+        target: &PackageId,
+    ) -> Result<Option<Activation>, WorkspaceError> {
+        let id = self
+            .ids
+            .get(dependent)
+            .ok_or_else(|| WorkspaceError::UnknownPackage(dependent.clone()))?;
+        let metadata = self.graph.metadata(id)?;
+        let feature_graph = self.graph.feature_graph();
+        let defaults: Vec<FeatureId<'_>> = self
+            .graph
+            .query_forward([id])?
+            .to_feature_query(StandardFeatures::Default)
+            .initials()
+            .feature_ids(DependencyDirection::Forward)
+            .collect();
+        let resolve = |extra: &[&str]| -> Result<FeatureSet<'_>, WorkspaceError> {
+            let initials = defaults
+                .iter()
+                .copied()
+                .chain(extra.iter().map(|feature| FeatureId::named(id, feature)));
+            Ok(feature_graph
+                .query_forward(initials)?
+                // As in `tests_built_from`: the crate's own dev-dependencies
+                // are built for its tests, other crates' are not.
+                .resolve_with_fn(|_, link| !link.dev_only() || link.from().package_id() == id))
+        };
+        if resolve(&[])?.contains_package(target)? {
+            return Ok(Some(Activation::Default));
+        }
+        let features: Vec<&str> = metadata
+            .named_features()
+            .filter(|feature| *feature != "default")
+            .collect();
+        let mut best: Option<(usize, &str)> = None;
+        for feature in &features {
+            let set = resolve(&[feature])?;
+            if set.contains_package(target)? && best.is_none_or(|(len, _)| set.len() < len) {
+                best = Some((set.len(), feature));
+            }
+        }
+        if let Some((_, feature)) = best {
+            return Ok(Some(Activation::Features(vec![feature.to_owned()])));
+        }
+        if !features.is_empty() && resolve(&features)?.contains_package(target)? {
+            let mut all: Vec<String> = features.into_iter().map(str::to_owned).collect();
+            all.sort();
+            return Ok(Some(Activation::Features(all)));
+        }
+        Ok(None)
     }
 
     /// The workspace crates `package` is built from: itself and everything it
@@ -258,6 +338,16 @@ impl WorkspaceGraph {
         }
         Ok(crates)
     }
+}
+
+/// What a workspace crate's tests need to be built from a package.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Activation {
+    /// The crate's default features are enough.
+    Default,
+    /// These features of the crate, by name in name order, turn on the
+    /// optional dependencies that lead to the package.
+    Features(Vec<String>),
 }
 
 /// How a crate is tied to a change.

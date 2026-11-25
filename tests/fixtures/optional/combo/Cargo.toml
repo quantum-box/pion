@@ -1,0 +1,13 @@
+[package]
+name = "op-combo"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+op-eval = { path = "../eval", optional = true }
+
+[features]
+with-eval = ["dep:op-eval"]
+# Weak: turns `evaluation` on only when something else turns op-eval on.
+evaluation = ["op-eval?/evaluation"]

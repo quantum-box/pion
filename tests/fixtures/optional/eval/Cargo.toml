@@ -1,0 +1,13 @@
+[package]
+name = "op-eval"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+ext = { path = "../ext", optional = true }
+
+[features]
+evaluation = ["dep:ext"]
+logging = []
+full = ["evaluation", "logging"]

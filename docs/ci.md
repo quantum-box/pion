@@ -126,7 +126,8 @@ One `key=value` line per output, each value on one line:
 | `packages` | The selected crates, as a JSON array |
 | `filtersets` | Crate → the nextest filterset for that crate, as a JSON object |
 | `filterset` | One filterset for everything; empty when no test is selected |
-| `matrix` | `{"include":[{"package":…,"filterset":…}]}` for `strategy.matrix` |
+| `features` | The features the selected crates need, as a JSON array of `<crate>/<feature>`; pass them to `--features` |
+| `matrix` | `{"include":[{"package":…,"filterset":…,"features":[…]}]}` for `strategy.matrix` |
 | `scenarios` | The selected scenario files, as a JSON array |
 | `uncovered` | Changed files no rule covers, as a JSON array |
 

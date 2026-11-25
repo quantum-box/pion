@@ -10,7 +10,7 @@ use crate::lockfile::LockChange;
 use crate::manifest::ManifestChange;
 use crate::scenario::Scenario;
 use crate::symbols::{ReferenceGraph, SymbolId, TestName};
-use crate::workspace::{Dependency, PackageName, WorkspaceError, WorkspaceGraph};
+use crate::workspace::{Activation, Dependency, PackageName, WorkspaceError, WorkspaceGraph};
 
 /// Which tests of a crate to run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,8 +32,15 @@ pub enum Reason {
     /// The crate depends on a crate that changed.
     DependsOnCrate { package: PackageName },
     /// The crate depends on an external package that `Cargo.lock` now
-    /// resolves differently.
-    DependsOnExternal { name: String, version: String },
+    /// resolves differently. `features` are the crate's own features that
+    /// turn on the optional dependencies leading to it; empty when the
+    /// crate's default features already do.
+    DependsOnExternal {
+        name: String,
+        version: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        features: Vec<String>,
+    },
     /// The crate is built from a package whose entry in the root manifest's
     /// `[workspace.dependencies]` changed.
     DependsOnWorkspaceDependency { name: String },
@@ -66,6 +73,11 @@ pub enum FallbackCause {
 pub struct CratePlan {
     pub selection: Selection,
     pub reasons: Vec<Reason>,
+    /// Features of the crate to turn on when running its tests, by name:
+    /// without them the build does not include what the reasons name.
+    /// Empty when the default features are enough.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub features: BTreeSet<String>,
 }
 
 /// Why an API scenario was selected.
@@ -303,14 +315,25 @@ impl<'a> Planner<'a> {
                 let plan = CratePlan {
                     selection: Selection::Tests(names),
                     reasons: reasons.into_iter().collect(),
+                    features: BTreeSet::new(),
                 };
                 crates.insert(package, plan);
             }
         }
         for (package, reasons) in whole {
+            let features = reasons
+                .iter()
+                .filter_map(|reason| match reason {
+                    Reason::DependsOnExternal { features, .. } => Some(features),
+                    _ => None,
+                })
+                .flatten()
+                .cloned()
+                .collect();
             let plan = CratePlan {
                 selection: Selection::All,
                 reasons: reasons.into_iter().collect(),
+                features,
             };
             crates.insert(package, plan);
         }
@@ -348,13 +371,18 @@ impl<'a> Planner<'a> {
             selected.push((package, dependents));
         }
         for (package, dependents) in selected {
-            for dependent in dependents {
+            for (dependent, activation) in dependents {
+                let features = match activation {
+                    Activation::Default => Vec::new(),
+                    Activation::Features(features) => features,
+                };
                 whole
                     .entry(dependent)
                     .or_default()
                     .insert(Reason::DependsOnExternal {
                         name: package.name.clone(),
                         version: package.version.clone(),
+                        features,
                     });
             }
         }
@@ -520,15 +548,27 @@ impl TestPlan {
     /// test runs in a crate that did not select it when another crate
     /// selected a test of the same name. That runs more, never less.
     ///
+    /// A crate that needs features to build what it was selected for adds
+    /// `--features <crate>/<feature>` to its invocation.
+    ///
     /// The caller's own arguments go before these: the list may end with the
     /// arguments of the test binary.
     pub fn cargo_test_arguments(&self) -> Vec<Vec<String>> {
         let packages = |all: bool| -> Vec<String> {
-            self.crates
+            let crates: BTreeMap<&PackageName, &CratePlan> = self
+                .crates
                 .iter()
                 .filter(|(_, plan)| (plan.selection == Selection::All) == all)
-                .flat_map(|(package, _)| ["--package".to_owned(), package.to_string()])
-                .collect()
+                .collect();
+            let mut arguments: Vec<String> = crates
+                .keys()
+                .flat_map(|package| ["--package".to_owned(), package.to_string()])
+                .collect();
+            let features = Self::qualified_features(crates);
+            if !features.is_empty() {
+                arguments.extend(["--features".to_owned(), features.join(",")]);
+            }
+            arguments
         };
         let mut invocations = Vec::new();
         let whole = packages(true);
@@ -554,6 +594,25 @@ impl TestPlan {
         invocations
     }
 
+    /// The features every selected crate needs, as `<crate>/<feature>`: the
+    /// form `--features` takes when several crates are built at once.
+    pub fn features(&self) -> Vec<String> {
+        Self::qualified_features(&self.crates)
+    }
+
+    fn qualified_features<'p>(
+        crates: impl IntoIterator<Item = (&'p PackageName, &'p CratePlan)>,
+    ) -> Vec<String> {
+        crates
+            .into_iter()
+            .flat_map(|(package, plan)| {
+                plan.features
+                    .iter()
+                    .map(move |feature| format!("{package}/{feature}"))
+            })
+            .collect()
+    }
+
     /// The nextest filterset that runs the selection of one crate.
     pub fn crate_filterset(package: &PackageName, plan: &CratePlan) -> String {
         match &plan.selection {
@@ -574,8 +633,10 @@ impl TestPlan {
     /// - `filtersets`: crate -> the nextest filterset for that crate.
     /// - `filterset`: one filterset for everything; empty when no test is
     ///   selected.
-    /// - `matrix`: `{"include":[{"package":…,"filterset":…}]}` for
-    ///   `strategy.matrix`.
+    /// - `features`: the features the selected crates need, as a JSON array
+    ///   of `<crate>/<feature>`; pass them to `--features`.
+    /// - `matrix`: `{"include":[{"package":…,"filterset":…,"features":[…]}]}`
+    ///   for `strategy.matrix`.
     /// - `scenarios`: the selected scenario files, as a JSON array.
     /// - `uncovered`: changed files no rule covers, as a JSON array.
     ///
@@ -586,12 +647,7 @@ impl TestPlan {
             .iter()
             .map(|(package, plan)| (package, Self::crate_filterset(package, plan)))
             .collect();
-        let include: Vec<serde_json::Value> = filtersets
-            .iter()
-            .map(|(package, filterset)| {
-                serde_json::json!({ "package": package, "filterset": filterset })
-            })
-            .collect();
+        let include = self.matrix_include();
         let json = |value: serde_json::Value| value.to_string();
         vec![
             (
@@ -604,6 +660,7 @@ impl TestPlan {
             ),
             ("filtersets", json(serde_json::json!(filtersets))),
             ("filterset", self.nextest_filterset().unwrap_or_default()),
+            ("features", json(serde_json::json!(self.features()))),
             ("matrix", json(serde_json::json!({ "include": include }))),
             (
                 "scenarios",
@@ -611,6 +668,21 @@ impl TestPlan {
             ),
             ("uncovered", json(serde_json::json!(self.uncovered))),
         ]
+    }
+
+    /// One GitHub Actions matrix entry per selected crate: its name, its
+    /// nextest filterset and the features it needs as `<crate>/<feature>`.
+    pub fn matrix_include(&self) -> Vec<serde_json::Value> {
+        self.crates
+            .iter()
+            .map(|(package, plan)| {
+                serde_json::json!({
+                    "package": package,
+                    "filterset": Self::crate_filterset(package, plan),
+                    "features": Self::qualified_features([(package, plan)]),
+                })
+            })
+            .collect()
     }
 
     /// A nextest filterset that runs exactly the selected tests, or `None`
@@ -625,5 +697,75 @@ impl TestPlan {
             .map(|(package, plan)| Self::crate_filterset(package, plan))
             .collect();
         Some(terms.join(" + "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn crate_plan(selection: Selection, features: &[&str]) -> CratePlan {
+        CratePlan {
+            selection,
+            reasons: Vec::new(),
+            features: features
+                .iter()
+                .map(|feature| (*feature).to_owned())
+                .collect(),
+        }
+    }
+
+    fn name(raw: &str) -> PackageName {
+        serde_json::from_value(serde_json::json!(raw)).expect("a package name")
+    }
+
+    fn some_tests() -> Selection {
+        let test: TestName = serde_json::from_value(serde_json::json!("t")).expect("a test name");
+        Selection::Tests(BTreeSet::from([test]))
+    }
+
+    #[test]
+    fn each_invocation_turns_on_the_features_of_its_own_crates() {
+        let plan = TestPlan {
+            crates: BTreeMap::from([
+                (name("a"), crate_plan(Selection::All, &["x", "y"])),
+                (name("b"), crate_plan(Selection::All, &[])),
+                (name("c"), crate_plan(some_tests(), &["z"])),
+            ]),
+            ..TestPlan::default()
+        };
+
+        assert_eq!(
+            plan.cargo_test_arguments(),
+            [
+                vec!["--package", "a", "--package", "b", "--features", "a/x,a/y"],
+                vec!["--package", "c", "--features", "c/z", "--", "--exact", "t"],
+            ]
+        );
+        assert_eq!(plan.features(), ["a/x", "a/y", "c/z"]);
+    }
+
+    #[test]
+    fn a_plan_saved_before_features_existed_still_reads() {
+        let json = r#"{
+            "crates": {"a": {"selection": "all", "reasons": [
+                {"reason": "depends_on_external", "name": "e", "version": "1.0.0"}
+            ]}},
+            "scenarios": {},
+            "uncovered": []
+        }"#;
+        let plan: TestPlan = serde_json::from_str(json).expect("reads");
+
+        let crate_plan = &plan.crates[&name("a")];
+        assert!(crate_plan.features.is_empty());
+        assert_eq!(
+            crate_plan.reasons,
+            [Reason::DependsOnExternal {
+                name: "e".into(),
+                version: "1.0.0".into(),
+                features: Vec::new(),
+            }]
+        );
+        assert_eq!(plan.cargo_test_arguments(), [["--package", "a"]]);
     }
 }

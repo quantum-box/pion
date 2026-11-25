@@ -30,4 +30,4 @@ pub use plan::{
     CratePlan, FallbackCause, Narrowing, Planner, Reason, ScenarioReason, Selection, TestPlan,
 };
 pub use symbols::{ReferenceGraph, SymbolId, TestName};
-pub use workspace::{PackageName, WorkspaceGraph};
+pub use workspace::{Activation, PackageName, WorkspaceGraph};

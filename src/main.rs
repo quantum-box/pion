@@ -263,7 +263,14 @@ fn print_plan(
     match format {
         Format::Json => say!("{}", serde_json::to_string_pretty(plan)?),
         Format::Nextest => match plan.nextest_filterset() {
-            Some(filterset) => say!("{filterset}"),
+            Some(filterset) => {
+                say!("{filterset}");
+                let features = plan.features();
+                if !features.is_empty() {
+                    // A filterset cannot say how to build; tell the caller.
+                    eprintln!("note: build with --features {}", features.join(","));
+                }
+            }
             None => eprintln!("no test is affected"),
         },
         Format::Packages => {
@@ -272,17 +279,10 @@ fn print_plan(
             }
         }
         Format::GithubMatrix => {
-            let include: Vec<serde_json::Value> = plan
-                .crates
-                .iter()
-                .map(|(package, crate_plan)| {
-                    serde_json::json!({
-                        "package": package,
-                        "filterset": TestPlan::crate_filterset(package, crate_plan),
-                    })
-                })
-                .collect();
-            say!("{}", serde_json::json!({ "include": include }));
+            say!(
+                "{}",
+                serde_json::json!({ "include": plan.matrix_include() })
+            );
         }
         Format::GithubOutput => {
             for (key, value) in plan.github_outputs() {
@@ -316,10 +316,16 @@ fn run(args: &RunArgs) -> Result<ExitCode, Failure> {
         .crates
         .keys()
         .flat_map(|package| ["--package", package.as_str()]);
+    let features = plan.features();
+    let features = (!features.is_empty())
+        .then(|| ["--features".to_owned(), features.join(",")])
+        .into_iter()
+        .flatten();
     let status = Command::new("cargo")
         .args(["nextest", "run", "--manifest-path"])
         .arg(&args.selecting.manifest_path)
         .args(packages)
+        .args(features)
         .args(["-E", &filterset])
         .args(&args.nextest_args)
         .status()?;
@@ -730,10 +736,16 @@ fn print_text(changed_files: Option<usize>, plan: &TestPlan) {
         plan.scenarios.len()
     );
     for (package, crate_plan) in &plan.crates {
+        let features = if crate_plan.features.is_empty() {
+            String::new()
+        } else {
+            let names: Vec<&str> = crate_plan.features.iter().map(String::as_str).collect();
+            format!(", with features: {}", names.join(", "))
+        };
         match &crate_plan.selection {
-            Selection::All => say!("\n{package} (all tests)"),
+            Selection::All => say!("\n{package} (all tests{features})"),
             Selection::Tests(tests) => {
-                say!("\n{package} ({} test(s))", tests.len());
+                say!("\n{package} ({} test(s){features})", tests.len());
                 for test in tests {
                     say!("  test: {test}");
                 }
@@ -772,9 +784,19 @@ fn describe(reason: &Reason) -> String {
     match reason {
         Reason::FileChanged { path } => format!("changed: {path}"),
         Reason::DependsOnCrate { package } => format!("depends on: {package}"),
-        Reason::DependsOnExternal { name, version } => {
-            format!("depends on: {name} {version} (Cargo.lock)")
-        }
+        Reason::DependsOnExternal {
+            name,
+            version,
+            features,
+        } if features.is_empty() => format!("depends on: {name} {version} (Cargo.lock)"),
+        Reason::DependsOnExternal {
+            name,
+            version,
+            features,
+        } => format!(
+            "depends on: {name} {version} (Cargo.lock), optional: enabled by feature {}",
+            features.join(", ")
+        ),
         Reason::DependsOnWorkspaceDependency { name } => {
             format!("workspace dependency changed: {name}")
         }

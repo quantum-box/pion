@@ -1,0 +1,7 @@
+# Crates that reach the package `ext` through optional dependencies.
+[workspace]
+resolver = "3"
+members = ["eval", "server", "plain", "pinned", "bydefault", "devtest", "combo"]
+# `ext` stands in for an external package: it is in the graph but not a
+# member.
+exclude = ["ext"]
