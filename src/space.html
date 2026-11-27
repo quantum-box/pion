@@ -588,8 +588,8 @@ function drawChangedFiles(project,scope) {
       const offset = kind === "added" ? 2 : -2;
       const x = -dy/length*offset;
       const y = dx/length*offset;
-      a = {x:a.x+x,y:a.y+y};
-      b = {x:b.x+x,y:b.y+y};
+      a = {...a,x:a.x+x,y:a.y+y};
+      b = {...b,x:b.x+x,y:b.y+y};
     }
     let color = "#91b9e8";
     if (kind === "added") color = "#65f2a8";
