@@ -425,8 +425,8 @@ fn changed_dependencies(
         .collect()
 }
 
-fn collect_references<'a>(
-    documents: Vec<(FileId, &'a Document)>,
+fn collect_references(
+    documents: Vec<(FileId, &Document)>,
     references: &mut References<'_>,
     include_definitions: bool,
     compare: bool,
