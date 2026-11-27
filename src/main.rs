@@ -14,6 +14,8 @@ use pion::{
     Selection, TestPlan, WorkspaceGraph, audit, records, scenario,
 };
 
+mod space;
+
 type Failure = Box<dyn std::error::Error>;
 
 /// Prints a line to standard output. When the reader has gone away
@@ -49,10 +51,28 @@ enum Action {
     Run(RunArgs),
     /// Build the index `plan --scip` reads, with rust-analyzer
     Index(IndexArgs),
+    /// Generate a standalone 3D HTML graph of the workspace
+    Space(SpaceArgs),
     /// List the failed tests of a full run that a plan did not select
     Audit(AuditArgs),
     /// Print what would run if given lines changed, one JSON object per line
     Impact(ImpactArgs),
+}
+
+#[derive(clap::Args)]
+struct SpaceArgs {
+    /// Path to the workspace Cargo.toml
+    #[arg(long, default_value = "Cargo.toml")]
+    manifest_path: Utf8PathBuf,
+    /// Standalone HTML file to write
+    #[arg(long, default_value = "target/pion/space.html")]
+    output: Utf8PathBuf,
+    /// SCIP index of the same working tree, from cargo pion index
+    #[arg(long)]
+    scip: Option<Utf8PathBuf>,
+    /// SCIP index generated from HEAD with the same rust-analyzer version
+    #[arg(long, requires = "scip")]
+    base_scip: Option<Utf8PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -225,6 +245,16 @@ fn main() -> ExitCode {
         Action::Render(args) => render(&args),
         Action::Run(args) => run(&args),
         Action::Index(args) => index(&args),
+        Action::Space(args) => space::write(
+            &args.manifest_path,
+            &args.output,
+            args.scip.as_deref(),
+            args.base_scip.as_deref(),
+        )
+        .map(|()| {
+            say!("{}", args.output);
+            ExitCode::SUCCESS
+        }),
         Action::Audit(args) => audit_plan(&args),
         Action::Impact(args) => impact(&args),
     };
