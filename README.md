@@ -125,6 +125,35 @@ Building an index with `cargo pion index` needs `rust-analyzer` on the `PATH`
 (`rustup component add rust-analyzer`), and `cargo pion run` needs
 [cargo-nextest](https://nexte.st).
 
+## Explore a workspace in 3D
+
+Run from a Git checkout of a Rust workspace:
+
+```bash
+cargo pion space
+```
+
+Open `target/pion/space.html` in a browser. The standalone page shows Cargo
+dependencies, transitive impact and shortest paths. Drill into a crate to
+browse its Rust files and view declarations and references in 3D.
+
+To resolve references across crates, use an index from the same working tree:
+
+```bash
+cargo pion index
+cargo pion space --scip target/pion/index.scip --output target/pion/space.html
+```
+
+To compare added and removed file dependencies, also pass
+`--base-scip path/to/head.scip`. Generate that index from a checkout of
+`HEAD` with the same rust-analyzer version and configuration, then choose
+the change review view in the map.
+
+Without an index, declaration references are same-name candidates within the
+crate. The HTML embeds the contents of Git-tracked Rust files from the working
+tree. It loads offline and contains source code, so share it only with people
+who can access that code.
+
 ## Use
 
 ```bash

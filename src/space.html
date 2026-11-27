@@ -1,0 +1,1585 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pion · Rust ワークスペース</title>
+<style>
+:root {
+  color-scheme: dark;
+  font: 14px/1.55 system-ui, sans-serif;
+  color: #edf3fc;
+  background: #0c111b;
+  --surface: #121b2a;
+  --field: #0e1623;
+  --border: #2c3b51;
+  --muted: #a9b8ce;
+  --accent: #a9d2ff;
+  --mono: ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; overflow: hidden; }
+h1, h2, h3, p { margin: 0; }
+h2 { font-size: 1.2rem; line-height: 1.35; }
+h3 { font-size: 1rem; }
+small, label, #source-status { color: var(--muted); }
+a { color: var(--accent); text-underline-offset: .22em; }
+[hidden] { display: none !important; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 12px; }
+.filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  gap: 6px 8px;
+}
+label { display: grid; gap: 5px; min-width: 0; font-size: .86rem; }
+input, select, button { font: inherit; color: #edf3fc; }
+select, input[type=search], button {
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--field);
+  padding: 8px 10px;
+}
+label select, label input { width: 100%; font-size: 1rem; }
+input[type=search]::placeholder { color: var(--muted); }
+button, select, summary { cursor: pointer; }
+button:hover:not(:disabled), select:hover { border-color: #7188a7; }
+button:disabled { opacity: .6; cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+#scene { overflow: hidden; min-width: 0; }
+#graph-viewport { position: relative; display: flex; flex-direction: column; min-height: 0; }
+#scene-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 14px;
+}
+.scene-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+canvas {
+  width: 100%;
+  height: clamp(340px, 57vh, 720px);
+  display: block;
+  touch-action: none;
+  cursor: grab;
+  background: radial-gradient(ellipse at 50% 45%, #1b2d45, transparent 72%), #0b1321;
+}
+canvas:active { cursor: grabbing; }
+.scene-footer { padding: 7px 10px; border-top: 1px solid var(--border); }
+.legend { display: flex; flex-wrap: wrap; gap: 3px 10px; margin-bottom: 3px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; font-size: .86rem; overflow-wrap: anywhere; }
+.legend span::before { content: ""; flex: none; background: var(--color); width: 8px; height: 8px; border-radius: 50%; }
+#scene { position: fixed; inset: 0; }
+#scene #graph-viewport { position: absolute; inset: 0; }
+#scene canvas { height: 100%; }
+#scene #scene-controls {
+  position: absolute;
+  inset: 12px 12px auto auto;
+  z-index: 3;
+  display: grid;
+  gap: 6px;
+  width: min(540px, calc(100% - 24px));
+  pointer-events: none;
+}
+#scene .filters, #scene .scene-actions, #scene .scene-footer, #scene .map-panel {
+  background: linear-gradient(145deg, rgb(141 185 242 / 24%), rgb(9 19 37 / 34%) 70%);
+  border: 1px solid rgb(181 214 255 / 29%);
+  border-top-color: rgb(218 235 255 / 56%);
+  border-left-color: rgb(202 226 255 / 42%);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 26%), inset 0 1px 0 rgb(236 246 255 / 15%);
+  -webkit-backdrop-filter: blur(6px) saturate(150%) brightness(1.2);
+  backdrop-filter: blur(6px) saturate(150%) brightness(1.2);
+}
+#scene-controls :is(button, select, input[type=search]) {
+  background: rgb(6 14 28 / 38%);
+  border-color: rgb(172 205 249 / 25%);
+  font-size: .86rem;
+  min-height: 32px;
+  padding: 4px 7px;
+}
+#scene-controls label { gap: 3px; font-size: .78rem; }
+#scene .filters { margin: 0; pointer-events: auto; }
+#change-file-label { grid-column: span 2; }
+#change-file-label:has(+ [hidden]) { grid-column: 1 / -1; }
+#scene #scene-toolbar { padding: 0; }
+#scene .scene-actions { padding: 4px; gap: 4px; pointer-events: auto; }
+#scene .scene-footer {
+  position: absolute;
+  inset: auto auto 12px 12px;
+  z-index: 3;
+  max-width: calc(100% - 24px);
+  pointer-events: none;
+}
+@media (max-width: 520px) {
+  #scene .scene-footer { padding: 8px 10px; }
+}
+#graph-tooltip {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  max-width: min(360px, calc(100% - 16px));
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  font-size: .9rem;
+  box-shadow: 0 4px 14px #0005;
+}
+aside { padding: 10px; min-width: 0; overflow-wrap: anywhere; }
+#route-label { margin-bottom: 14px; }
+#details > * + * { margin-top: 10px; }
+#details > code { display: block; color: var(--muted); font: .86rem/1.5 var(--mono); }
+#details h3 { border-top: 1px solid var(--border); padding-top: 12px; }
+aside ol, aside ul { padding-left: 20px; margin-bottom: 0; }
+aside li + li { margin-top: 6px; }
+aside button, #code-relations button { padding: 4px 8px; text-align: left; overflow-wrap: anywhere; }
+
+#source-panel { padding: 10px; min-width: 0; }
+.map-panel {
+  justify-self: end;
+  width: min(100%, 340px);
+  max-height: 40dvh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+}
+#source-panel.map-panel { width: 100%; }
+#source-panel .controls { margin-block: 8px; gap: 6px 8px; }
+#source-panel label { flex: 1 1 135px; }
+#source-status { margin-top: 5px; }
+#source-path { font: .9rem/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; margin-top: 12px; }
+#source-lines {
+  max-height: 30dvh;
+  overflow: auto;
+  background: rgb(6 14 28 / 45%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 0;
+  font: 13px/1.55 var(--mono);
+  tab-size: 4;
+}
+.source-line { display: flex; min-width: max-content; min-height: 1.55em; }
+.source-line:target, .source-line.active { background: #263d5b; }
+.source-number { color: var(--muted); min-width: 4.8em; text-align: right; padding-right: 1em; user-select: none; }
+.source-line code { white-space: pre; }
+#code-relations { margin-block: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; }
+#code-relations ul { list-style: none; border-left: 2px solid var(--border); padding-left: 12px; }
+#code-relations li { margin-block: 6px; }
+@media (max-width: 520px) {
+  .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .filters label:nth-child(2) { grid-column: 1 / -1; grid-row: 1; }
+}
+</style>
+</head>
+<body>
+<main id="scene" aria-label="3D依存グラフ">
+<div id="scene-controls">
+<div class="controls filters" id="crate-filters">
+<label>領域<select id="group"><option value="">すべて</option></select></label>
+<label>クレートを検索<input id="search" type="search" placeholder="名前またはパス"></label>
+<label>クレート<select id="crate"></select></label>
+<label>分析<select id="mode"><option value="direct">直接依存</option><option value="impact">変更の波及範囲</option><option value="upstream">間接依存先</option></select></label>
+<label>構造の表示<select id="structure-view"><option value="all">構造と参照</option><option value="tree">ディレクトリ構造</option><option value="review">レイヤーの逆向き参照</option><option value="changes">差分レビュー</option></select></label>
+<label id="change-file-label" hidden>変更ファイル<select id="change-file"><option value="">変更全体</option></select></label>
+<label id="change-edge-label" hidden>表示する参照<select id="change-edge"><option value="all">周辺の依存を含む</option><option value="delta">増減した依存のみ</option></select></label>
+<label><span>依存種別</span><select id="kind"><option value="normal">通常依存</option><option value="all">通常・開発・ビルド</option></select></label>
+</div>
+<div id="scene-toolbar">
+<div class="scene-actions">
+<button id="browse-details" type="button" aria-controls="details-panel" aria-expanded="false">クレート詳細</button>
+<button id="browse-source" type="button" aria-controls="source-panel" aria-expanded="false" disabled>ソースコード</button>
+<button id="file-dependencies" type="button" hidden>ファイル依存</button>
+<button id="graph-source" type="button" hidden>このファイルを読む</button>
+<button id="code-back" type="button" hidden>戻る</button>
+</div>
+</div>
+<aside id="details-panel" class="map-panel" hidden><label id="route-label" hidden>経路の終点<select id="route"></select></label><div id="details"><h2>クレート詳細</h2><p>クレートを選ぶと、依存関係と定義ファイルを表示します。</p></div></aside>
+<section id="source-panel" class="map-panel" hidden>
+  <h2 id="source-title" tabindex="-1">ソースコード</h2>
+  <p id="source-status" role="status"></p>
+  <div class="controls" id="source-controls" hidden>
+    <label>ファイルを絞り込む<input id="file-query" type="search" placeholder="src/lib.rs"></label>
+    <label>Rustファイル<select id="source-file"></select></label>
+    <label>宣言へ移動<select id="source-symbol"></select></label>
+  </div>
+  <details id="code-relations">
+    <summary>宣言と参照箇所</summary>
+    <div class="controls">
+      <label>クレート内の宣言を検索<input id="symbol-query" type="search" placeholder="関数名・型名・モジュール名"></label>
+      <label>調べる宣言<select id="symbol-target"></select></label>
+    </div>
+    <div id="symbol-links" aria-live="polite"></div>
+  </details>
+  <p><button id="open-code-graph" type="button" disabled>選択したファイルを3Dで見る</button> <button id="source-file-dependencies" type="button" hidden>このファイルの依存を3Dで見る</button></p>
+  <div id="source-path"></div>
+  <pre id="source-lines" aria-label="行番号付きRustソース" tabindex="0" hidden></pre>
+</section>
+</div>
+<div id="graph-viewport">
+<canvas aria-label="Rustクレートの3D依存グラフ。ドラッグで回転、ピンチで拡大縮小できます。"></canvas>
+<div id="graph-tooltip" role="tooltip" hidden></div>
+</div>
+<div class="scene-footer">
+<div class="legend" id="legend"></div>
+<small id="map-help">ドラッグで回転、ピンチで拡大縮小、Shift＋ドラッグで移動。色の輪郭はクレートの範囲、四角はディレクトリ、小さな点はRustファイル。橙の線は内側のレイヤーから外側への参照候補。</small>
+<small id="change-summary" hidden></small>
+</div>
+</main>
+<script id="workspace" type="application/json">__PION_WORKSPACE__</script>
+<script id="source-snapshot" type="application/json">__PION_SOURCE_SNAPSHOT__</script>
+<script id="pion-references" type="application/json">__PION_REFERENCES__</script>
+<script>
+"use strict";
+const elements = Object.fromEntries(["group","search","crate","mode","kind","structure-view","route","route-label","legend","details","workspace"].map(id => [id, document.getElementById(id)]));
+const {nodes, edges, changed_rust_paths = [], dependency_changes = null} = JSON.parse(elements.workspace.textContent);
+const groups = [...new Set(nodes.map(node => node.group))].sort();
+const colors = Object.fromEntries(groups.map((group,index) =>
+  [group,"hsl("+((205+index*137.5)%360)+" 75% 73%)"]));
+const canvas = document.querySelector("canvas");
+const ctx = canvas.getContext("2d");
+let selected = null;
+let matches = new Set();
+let points = [];
+let visiblePoints = [];
+let visibleFilePoints = [];
+let visibleDirectories = [];
+let visibleReviewEdges = [];
+let visibleEdges = [];
+let codeGraph = null;
+const camera = {yaw:15,pitch:22,zoom:110,panX:0,panY:0};
+let localZoom = 100;
+const semanticReferences = JSON.parse(document.getElementById("pion-references").textContent);
+const semanticFiles = semanticReferences.files ?? [];
+const semanticPaths = new Map(semanticFiles.map(([index,path],id) => [index+":"+path,id]));
+function indexedReferences(index,path,line) {
+  const fileId = semanticPaths.get(index+":"+path);
+  const matches = semanticReferences.definitions?.[fileId]?.[line];
+  if (!matches) return null;
+  return matches.map(([fileId,line]) => {
+    const [crate,path] = semanticFiles[fileId];
+    return {crate,path,line,label:nodes[crate].name+" · "+path+":"+line,
+      text:crate === sourceCrate ? sourceFiles[path]?.split("\n")[line-1]?.trim() : ""};
+  });
+}
+const codeBack = document.getElementById("code-back");
+const codeOpen = document.getElementById("open-code-graph");
+
+const dependencyButton = document.getElementById("file-dependencies");
+const sourceDependencyButton = document.getElementById("source-file-dependencies");
+const graphSource = document.getElementById("graph-source");
+const fileDependencies = semanticReferences.file_dependencies ?? {};
+const indexedFiles = new Set(semanticReferences.indexed_files ?? []);
+const fileDependents = new Map();
+for (const [from,targets] of Object.entries(fileDependencies)) {
+  for (const [to,count] of Object.entries(targets)) {
+    const file = Number(to);
+    if (!fileDependents.has(file)) fileDependents.set(file,new Map());
+    fileDependents.get(file).set(Number(from),count);
+  }
+}
+function fileLocation(id) {
+  const [crate,path] = semanticFiles[id];
+  return {file:id,crate,path,line:1,label:nodes[crate].name+" · "+path};
+}
+let workspaceFileGraph;
+const architectureLayers = new Map([
+  ["domain",{name:"Domain",height:0.95,rank:0}],
+  ["application",{name:"Application",height:0.35,rank:1}],
+  ["usecase",{name:"Application",height:0.35,rank:1}],
+  ["usecases",{name:"Application",height:0.35,rank:1}],
+  ["infrastructure",{name:"Infrastructure",height:-0.30,rank:2}],
+  ["infra",{name:"Infrastructure",height:-0.30,rank:2}],
+  ["presentation",{name:"Presentation",height:-0.75,rank:2}]
+]);
+function buildWorkspaceFileGraph() {
+  const files = semanticFiles.length ? semanticFiles : Object.entries(sourcePayload)
+    .flatMap(([crate,files]) => Object.keys(files).map(path => [Number(crate),path]));
+  const root = {path:".",children:new Map(),files:[],depth:0,internal:0,external:0};
+  function directory(path) {
+    return path.filter(Boolean).reduce((parent,segment) => {
+      if (!parent.children.has(segment)) {
+        parent.children.set(segment,{path:parent.path === "." ? segment : parent.path+"/"+segment,
+          parent,depth:parent.depth+1,children:new Map(),files:[],internal:0,external:0,
+          layer:architectureLayers.get(segment.toLowerCase()) ?? parent.layer});
+      }
+      return parent.children.get(segment);
+    },root);
+  }
+  const crates = nodes.map(({path}) => directory(path.split("/").slice(0,-1)));
+  const marks = files.map(([crate,path]) => {
+    const segments = path.split("/");
+    const owner = directory([...nodes[crate].path.split("/").slice(0,-1),...segments.slice(0,-1)]);
+    const file = {crate,path,line:1,label:nodes[crate].name+" · "+path,owner};
+    owner.files.push(file);
+    return file;
+  });
+  const ancestors = marks.map(({owner}) => {
+    const chain = new Set();
+    for (let entry = owner; entry; entry = entry.parent) chain.add(entry);
+    return chain;
+  });
+  const connections = Object.entries(fileDependencies).flatMap(([from,targets]) =>
+    Object.keys(targets).map(to => [Number(from),Number(to)]));
+  const reviewConnections = [];
+  for (const [from,to] of connections) {
+    const source = ancestors[from];
+    const target = ancestors[to];
+    for (const entry of source) {
+      if (target.has(entry)) entry.internal++;
+      else entry.external++;
+    }
+    for (const entry of target) {
+      if (!source.has(entry)) entry.external++;
+    }
+    const a = marks[from].owner.layer;
+    const b = marks[to].owner.layer;
+    if (a && b && a.rank < b.rank) reviewConnections.push([from,to]);
+  }
+  function countEntries(entry) {
+    entry.size = 1+entry.files.length;
+    for (const child of entry.children.values()) entry.size += countEntries(child);
+    return entry.size;
+  }
+  countEntries(root);
+  const directories = [];
+  function layout(entry,left,right,front,back) {
+    const x = (left+right)/2;
+    const z = (front+back)/2;
+    const y = (entry.layer?.height ?? -0.12)+Math.min(entry.depth,12)*0.065;
+    const refs = entry.internal+entry.external;
+    entry.cohesion = refs ? entry.internal/refs : null;
+    entry.position = [x,y,z];
+    directories.push(entry);
+    const children = [...entry.children.values()].sort((a,b) => a.path.localeCompare(b.path));
+    const entries = [...children,...entry.files];
+    const weights = entries.map(item => Math.sqrt(item.size ?? 1));
+    const total = weights.reduce((sum,weight) => sum+weight,0);
+    const splitX = right-left >= back-front;
+    let cursor = splitX ? left : front;
+    entries.forEach((item,index) => {
+      const extent = (splitX ? right-left : back-front)*weights[index]/total;
+      const end = cursor+extent;
+      if (index < children.length) {
+        if (splitX) layout(item,cursor,end,front,back);
+        else layout(item,left,right,cursor,end);
+      } else {
+        const pull = (entry.cohesion ?? 0)*0.32;
+        const slot = (cursor+end)/2;
+        item.position = [splitX ? slot+(x-slot)*pull : x,y+0.075,
+          splitX ? z : slot+(z-slot)*pull];
+      }
+      cursor = end;
+    });
+  }
+  layout(root,-3.4,3.4,-2.5,2.5);
+  const changeMarks = [...marks];
+  const pathIds = new Map(marks.map((file,id) => [[...nodes[file.crate].path.split("/").slice(0,-1),file.path].join("/"),id]));
+  const directoriesByPath = new Map(directories.map(entry => [entry.path,entry]));
+  function changeId(path) {
+    if (pathIds.has(path)) return pathIds.get(path);
+    const segments = path.split("/");
+    segments.pop();
+    while (segments.length && !directoriesByPath.has(segments.join("/"))) segments.pop();
+    const owner = directoriesByPath.get(segments.join("/")) ?? root;
+    const id = changeMarks.length;
+    const [x,y,z] = owner.position;
+    const offset = 0.04*((id%7)+1);
+    changeMarks.push({crate:null,path,label:path,owner,removed:true,
+      position:[x+offset,y+0.1,z-offset]});
+    pathIds.set(path,id);
+    return id;
+  }
+  const changed = new Set(changed_rust_paths
+    .filter(path => pathIds.has(path) || dependency_changes)
+    .map(changeId));
+  const deltas = [];
+  const modifiedPairs = new Set();
+  for (const kind of ["added","removed"]) {
+    for (const [source,target,count] of dependency_changes?.[kind] ?? []) {
+      const from = changeId(source);
+      const to = changeId(target);
+      deltas.push([from,to,kind,count]);
+      modifiedPairs.add(from+":"+to);
+    }
+  }
+  const changeConnections = [...connections
+    .filter(([from,to]) => (changed.has(from)||changed.has(to)) && !modifiedPairs.has(from+":"+to)),
+    ...deltas];
+  const affected = new Set([...changed,...changeConnections.flatMap(([from,to]) => [from,to])]);
+  const affectedCrates = new Set([...affected].map(id => changeMarks[id].crate));
+  const changeFile = document.getElementById("change-file");
+  for (const id of changed) changeFile.add(new Option(changeMarks[id].label,id));
+  return {marks,connections,reviewConnections,directories,cratePositions:crates.map(entry => entry.position),
+    changed,affected,affectedCrates,changeConnections,changeMarks,
+    crateFiles:marks.reduce((groups,file,id) => {
+      groups[file.crate].push(id);
+      return groups;
+    },nodes.map(() => []))};
+}
+function openFileDependencies(file,previousFile = null) {
+  function links(id) {
+    const outgoing = fileDependencies[id] ?? {};
+    const incoming = fileDependents.get(id) ?? new Map();
+    return [...new Set([...Object.keys(outgoing).map(Number),...incoming.keys()])]
+      .map(other => [other,(outgoing[other] ?? 0)+(incoming.get(other) ?? 0)]);
+  }
+  const direct = links(file).sort(([a,countA],[b,countB]) =>
+    Number(b === previousFile)-Number(a === previousFile) || countB-countA || a-b);
+  const directIds = new Set(direct.map(([id]) => id));
+  const first = direct.slice(0,36);
+  const second = new Map();
+  for (const [id] of first) {
+    for (const [candidate,count] of links(id)) {
+      if (candidate !== file && !directIds.has(candidate)) {
+        second.set(candidate,(second.get(candidate) ?? 0)+count);
+      }
+    }
+  }
+  const outer = [...second].sort(([a,countA],[b,countB]) => countB-countA || a-b).slice(0,44);
+  const neighbors = [
+    ...first.map(([id]) => ({...fileLocation(id),hops:1})),
+    ...outer.map(([id]) => ({...fileLocation(id),hops:2}))
+  ];
+  const root = fileLocation(file);
+  const marks = [root,...neighbors];
+  const indices = new Map(marks.map((item,index) => [item.file,index]));
+  const connections = marks.flatMap((item,from) => Object.entries(fileDependencies[item.file] ?? {})
+    .filter(([id]) => indices.has(Number(id)))
+    .map(([id,count]) => [from,indices.get(Number(id)),count]));
+  codeGraph = {fileDependencies:true,root,neighbors,connections,firstCount:first.length};
+  setPanel(null);
+  renderGraphMode();
+}
+function currentFileId() {
+  const file = semanticPaths.get(sourceCrate+":"+sourceUI["source-file"].value);
+  return indexedFiles.has(file) ? file : undefined;
+}
+dependencyButton.onclick = sourceDependencyButton.onclick = () => openFileDependencies(currentFileId());
+graphSource.onclick = () => activateCodeNode(0);
+
+function openCodeGraph(path, symbol = null) {
+  const fileDeclarations = declarations.filter(item => item.path === path);
+  const root = symbol ? {...symbol,label:symbol.kind+" "+symbol.name} : {path,line:1,label:path};
+  const neighbors = [];
+  let total = 0;
+  const indexed = symbol ? indexedReferences(sourceCrate,path,symbol.line) : null;
+  if (indexed) {
+    total = indexed.length;
+    neighbors.push(...indexed.slice(0,100));
+  } else if (symbol) {
+    const keyword = new RegExp("\\b"+symbol.name+"\\b");
+    const definitions = new Set(declarations.filter(item => item.name === symbol.name)
+      .map(item => item.path+":"+item.line));
+    for (const [file,source] of Object.entries(sourceFiles)) {
+      source.split("\n").forEach((text,index) => {
+        const line = index+1;
+        if (!keyword.test(text) || definitions.has(file+":"+line)) return;
+        total++;
+        if (neighbors.length < 100) neighbors.push({path:file,line,label:file+":"+line,text:text.trim()});
+      });
+    }
+  } else {
+    total = fileDeclarations.length;
+    neighbors.push(...fileDeclarations.slice(0,100).map(item => ({...item,label:item.kind+" "+item.name})));
+  }
+  codeGraph = {path,symbol,root,neighbors,total,indexed:indexed !== null};
+  setPanel(null);
+  renderGraphMode();
+}
+function closeCodeGraph() {
+  if (codeGraph?.symbol) {
+    openCodeGraph(codeGraph.path);
+    return;
+  }
+  codeGraph = null;
+  renderGraphMode();
+}
+codeBack.onclick = closeCodeGraph;
+codeOpen.onclick = () => openCodeGraph(sourceUI["source-file"].value);
+function depthLight(distance) {
+  return Math.max(0.42,Math.min(1,0.73+distance*0.19));
+}
+function labelFontSize(point,baseSize) {
+  return Math.max(9,Math.min(21,baseSize*Math.pow(point.perspective,1.25)));
+}
+function markerRadius(point,baseRadius) {
+  return baseRadius * Math.pow(point.perspective,1.6);
+}
+function drawMarker(point,radius,color,opacity,highlighted) {
+  const {x,y} = point;
+  const light = ctx.createRadialGradient(x-radius*0.32,y-radius*0.38,0,x,y,radius);
+  light.addColorStop(0,"#f5faff");
+  light.addColorStop(0.45,color);
+  light.addColorStop(1,"#28394e");
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = light;
+  ctx.beginPath();
+  ctx.arc(x,y,radius,0,Math.PI*2);
+  ctx.fill();
+  if (highlighted) {
+    ctx.setLineDash([]);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(x,y,radius+4,0,Math.PI*2);
+    ctx.stroke();
+  }
+}
+function drawDependencyArrow(from,to,color,inset) {
+  const length = Math.hypot(to.x-from.x,to.y-from.y);
+  if (length < inset+8) return;
+  const dx = (to.x-from.x)/length;
+  const dy = (to.y-from.y)/length;
+  const x = to.x-dx*inset;
+  const y = to.y-dy*inset;
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x,y);
+  ctx.lineTo(x-dx*8-dy*4,y-dy*8+dx*4);
+  ctx.lineTo(x-dx*8+dy*4,y-dy*8-dx*4);
+  ctx.fill();
+  ctx.restore();
+}
+const changeSummary = document.getElementById("change-summary");
+const mapHelp = document.getElementById("map-help");
+const changeFile = document.getElementById("change-file");
+const changeFileLabel = document.getElementById("change-file-label");
+const changeEdge = document.getElementById("change-edge");
+const changeEdgeLabel = document.getElementById("change-edge-label");
+changeFile.onchange = changeEdge.onchange = draw;
+function currentChangeScope() {
+  const single = changeFile.value !== "";
+  const onlyDeltas = changeEdge.value === "delta";
+  if (!single && !onlyDeltas) return workspaceFileGraph;
+  const id = Number(changeFile.value);
+  const {changeMarks} = workspaceFileGraph;
+  const changed = single ? new Set([id]) : workspaceFileGraph.changed;
+  const changeConnections = workspaceFileGraph.changeConnections.filter(([from,to,kind]) =>
+    (!single || from === id || to === id) && (!onlyDeltas || kind));
+  const affected = new Set([...changed,...changeConnections.flatMap(([from,to]) => [from,to])]);
+  const affectedCrates = new Set([...affected].map(file => changeMarks[file].crate));
+  return {changeMarks,changed,affected,affectedCrates,changeConnections};
+}
+function drawChangedFiles(project,scope) {
+  const {changeMarks:marks,changed,affected,changeConnections} = scope;
+  const positions = new Map([...affected].map(id => [id,project(...marks[id].position)]));
+  ctx.setLineDash([]);
+  ctx.lineWidth = 1.3;
+  for (const [from,to,kind,count] of changeConnections) {
+    let a = positions.get(from);
+    let b = positions.get(to);
+    const dx = b.x-a.x;
+    const dy = b.y-a.y;
+    const length = Math.hypot(dx,dy);
+    if (kind && length) {
+      const offset = kind === "added" ? 2 : -2;
+      const x = -dy/length*offset;
+      const y = dx/length*offset;
+      a = {x:a.x+x,y:a.y+y};
+      b = {x:b.x+x,y:b.y+y};
+    }
+    let color = "#91b9e8";
+    if (kind === "added") color = "#65f2a8";
+    else if (kind === "removed") color = "#ff8194";
+    else if (!dependency_changes) {
+      color = changed.has(from) ? changed.has(to) ? "#ffca82" : "#74dfbc" : "#87bdff";
+    }
+    ctx.setLineDash(kind === "removed" ? [5,4] : []);
+    ctx.lineWidth = kind ? 1.8 : 0.85;
+    ctx.globalAlpha = kind ? 0.95 : dependency_changes ? 0.33 : 0.6;
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(a.x,a.y);
+    ctx.lineTo(b.x,b.y);
+    ctx.stroke();
+    drawDependencyArrow(a,b,color,markerRadius(b,changed.has(to) ? 5 : 3)+3);
+    visibleReviewEdges.push({a,b,source:marks[from],target:marks[to],change:true,kind,count});
+  }
+  const ordered = [...positions].sort(([,a],[,b]) => a.distance-b.distance);
+  for (const [id,point] of ordered) {
+    const isChanged = changed.has(id);
+    const radius = markerRadius(point,isChanged ? 5 : 3);
+    visibleFilePoints.push({...point,radius,file:marks[id],isChanged});
+    const color = marks[id].removed ? "#ff8194" : isChanged ? "#ffca82" : "#9dbbdf";
+    drawMarker(point,radius,color,isChanged ? 1 : depthLight(point.distance),isChanged);
+  }
+}
+function clusterOutline(points) {
+  const sorted = [...points].sort((a,b) => a.x-b.x || a.y-b.y);
+  function half(sequence) {
+    const result = [];
+    for (const point of sequence) {
+      while (result.length >= 2) {
+        const a = result.at(-2);
+        const b = result.at(-1);
+        if ((b.x-a.x)*(point.y-a.y) > (b.y-a.y)*(point.x-a.x)) break;
+        result.pop();
+      }
+      result.push(point);
+    }
+    return result.slice(0,-1);
+  }
+  return [...half(sorted),...half(sorted.reverse())];
+}
+function drawCrateClusters(projected) {
+  for (const [crate,files] of workspaceFileGraph.crateFiles.entries()) {
+    if (!files.length || (!matches.has(crate) && crate !== selected)) continue;
+    const active = crate === selected;
+    if (!active && files.length < 4) continue;
+    const outline = clusterOutline([points[crate],...files.map(id => projected[id])]);
+    if (outline.length < 2) continue;
+    const color = colors[nodes[crate].group];
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(outline[0].x,outline[0].y);
+    for (const point of outline.slice(1)) ctx.lineTo(point.x,point.y);
+    ctx.closePath();
+    ctx.globalAlpha = active ? 0.17 : 0.055;
+    ctx.lineWidth = active ? 9 : 5;
+    ctx.fill();
+    ctx.stroke();
+    if (active) {
+      ctx.globalAlpha = 0.52;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+  ctx.lineCap = "butt";
+}
+function drawWorkspaceFiles(project,changeScope) {
+  const {marks,connections,reviewConnections,directories} = workspaceFileGraph;
+  const view = elements["structure-view"].value;
+  if (view === "changes") {
+    drawChangedFiles(project,changeScope);
+    return;
+  }
+  const projected = marks.map(item => project(...item.position));
+  ctx.setLineDash([]);
+  drawCrateClusters(projected);
+  ctx.lineWidth = 0.65;
+  if (view === "all") for (const focused of [false,true]) {
+    ctx.strokeStyle = focused ? "#83baff" : "#708aaa";
+    ctx.globalAlpha = focused ? 0.22 : 0.055;
+    ctx.beginPath();
+    for (const [from,to] of connections) {
+      if ((marks[from].crate === selected || marks[to].crate === selected) !== focused) continue;
+      const a = projected[from];
+      const b = projected[to];
+      ctx.moveTo(a.x,a.y);
+      ctx.lineTo(b.x,b.y);
+    }
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "#ffc18a";
+  ctx.lineWidth = view === "review" ? 2 : 1.15;
+  ctx.globalAlpha = view === "review" ? 0.95 : 0.65;
+  ctx.beginPath();
+  for (const [from,to] of view === "tree" ? [] : reviewConnections) {
+    const a = projected[from];
+    const b = projected[to];
+    visibleReviewEdges.push({a,b,source:marks[from],target:marks[to]});
+    ctx.moveTo(a.x,a.y);
+    ctx.lineTo(b.x,b.y);
+  }
+  ctx.stroke();
+
+  const directoryPoints = new Map(directories.map(entry => [entry,project(...entry.position)]));
+  ctx.lineWidth = 0.85;
+  ctx.strokeStyle = "#8ba4bf";
+  ctx.globalAlpha = view === "tree" ? 0.48 : 0.24;
+  ctx.beginPath();
+  for (const [entry,point] of directoryPoints) {
+    if (!entry.parent) continue;
+    const parent = directoryPoints.get(entry.parent);
+    ctx.moveTo(parent.x,parent.y);
+    ctx.lineTo(point.x,point.y);
+  }
+  marks.forEach((file,index) => {
+    if (view !== "tree" && file.crate !== selected) return;
+    const parent = directoryPoints.get(file.owner);
+    ctx.moveTo(parent.x,parent.y);
+    ctx.lineTo(projected[index].x,projected[index].y);
+  });
+  ctx.stroke();
+  for (const [entry,point] of directoryPoints) {
+    const radius = markerRadius(point,2.65);
+    visibleDirectories.push({...point,radius,entry});
+    ctx.globalAlpha = depthLight(point.distance);
+    ctx.fillStyle = entry.layer ? "#bad5f4" : "#8095b0";
+    ctx.fillRect(point.x-radius,point.y-radius,radius*2,radius*2);
+  }
+  ctx.lineWidth = 1;
+  projected.map((point,index) => ({...point,index})).sort((a,b) => a.distance-b.distance).forEach(point => {
+    const file = marks[point.index];
+    const focused = file.crate === selected;
+    const radius = markerRadius(point,focused ? 2.5 : 1.65);
+    visibleFilePoints.push({...point,radius,file});
+    ctx.globalAlpha = depthLight(point.distance)*(focused ? 1 : 0.65);
+    ctx.fillStyle = colors[nodes[file.crate].group];
+    ctx.beginPath();
+    ctx.arc(point.x,point.y,radius,0,Math.PI*2);
+    ctx.fill();
+  });
+}
+function drawCodeGraph(project,width,height) {
+  const {root,neighbors,symbol,total,indexed,fileDependencies,connections,firstCount} = codeGraph;
+  const marks = [root,...neighbors];
+  const positions = marks.map((item,index) => {
+    if (!index) return project(0,0,0);
+    const outer = item.hops === 2;
+    const slot = outer ? index-firstCount : index;
+    const count = fileDependencies ? outer ? neighbors.length-firstCount : firstCount : neighbors.length;
+    const angle = slot * Math.PI * (3-Math.sqrt(5)) + (outer ? 0.8 : 0);
+    const vertical = 1 - 2*(slot-0.5)/count;
+    const radius = Math.sqrt(1-vertical*vertical);
+    const shell = fileDependencies ? outer ? 1.35 : 0.73 : 1.2;
+    return project(radius*Math.cos(angle)*shell,vertical*shell,radius*Math.sin(angle)*shell);
+  });
+  points = positions;
+  const connectionsToDraw = connections ?? neighbors.map((_,index) => [0,index+1]);
+  for (const [from,to,count] of connectionsToDraw) {
+    const source = positions[from];
+    const target = positions[to];
+    const color = from === 0 ? "#77c5ff" : to === 0 ? "#ffc675" : "#a6b6cf";
+    ctx.globalAlpha = fileDependencies ? from === 0 || to === 0 ? 0.72 : 0.34 : 0.45;
+    ctx.strokeStyle = fileDependencies ? color : "#8db6cb";
+    ctx.beginPath();
+    ctx.moveTo(source.x,source.y);
+    ctx.lineTo(target.x,target.y);
+    ctx.stroke();
+    if (fileDependencies) {
+      drawDependencyArrow(source,target,color,markerRadius(target,to === 0 ? 10 : 6)+5);
+    }
+    visibleEdges.push([from,to,count]);
+  }
+  positions.map((point,index) => ({...point,index})).sort((a,b) => a.distance-b.distance).forEach(point => {
+    const radius = markerRadius(point,point.index ? 6 : 10);
+    visiblePoints.push({...point,radius});
+    drawMarker(point,radius,point.index ? marks[point.index].hops === 2 ? "#a6b6cf" : "#75b7ff" : "#ffc675",depthLight(point.distance),point.index === 0);
+    ctx.globalAlpha = 1;
+    if (neighbors.length <= 20 || point.index === 0) {
+      const fontSize = labelFontSize(point,point.index ? 13 : 15);
+      ctx.font = (point.index ? "" : "600 ")+fontSize+"px system-ui";
+      ctx.fillStyle = "#edf3fc";
+      ctx.fillText(marks[point.index].label,point.x+radius+4,point.y-4,Math.max(10,width-point.x-radius-8));
+    }
+  });
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#edf3fc";
+  ctx.font = "14px system-ui";
+  const caption = fileDependencies
+    ? "ファイル依存 · "+marks.length+" ファイル / "+connections.length+" 本 · 青は依存先、橙は依存元"
+    : (symbol ? indexed ? "Pion / SCIP で解決した参照" : "名前が一致する参照候補" : "ファイル内の宣言")+" "+neighbors.length+" / "+total;
+  ctx.fillText(caption,14,height-18,Math.max(10,width-28));
+}
+function activateCodeNode(index) {
+  const {path,symbol,root,neighbors,fileDependencies} = codeGraph;
+  const item = index ? neighbors[index-1] : root;
+  if (fileDependencies && index) {
+    openFileDependencies(item.file,root.file);
+    return;
+  }
+  if (!fileDependencies && !symbol && index) {
+    openCodeGraph(path,item);
+    return;
+  }
+  codeGraph = null;
+  renderGraphMode();
+  jumpToReference(item);
+}
+function jumpToReference(item) {
+  if (item.crate !== undefined && item.crate !== sourceCrate) {
+    choose(item.crate);
+  }
+  setPanel("source");
+  showLine(item.path,item.line);
+}
+
+const tooltip = document.getElementById("graph-tooltip");
+const kindLabels = {normal:"通常",dev:"開発",build:"ビルド"};
+function hideTooltip() {
+  tooltip.hidden = true;
+}
+function filePointAt(x,y) {
+  let nearest;
+  let distance = 6;
+  for (const point of visibleFilePoints) {
+    const offset = Math.hypot(point.x-x,point.y-y);
+    if (offset <= distance) {
+      nearest = point;
+      distance = offset;
+    }
+  }
+  return nearest;
+}
+function distanceToSegment(x,y,a,b) {
+  const dx = b.x-a.x;
+  const dy = b.y-a.y;
+  const lengthSquared = dx*dx+dy*dy;
+  if (!lengthSquared) return Infinity;
+  const fraction = Math.max(0,Math.min(1,((x-a.x)*dx+(y-a.y)*dy)/lengthSquared));
+  return Math.hypot(x-a.x-fraction*dx,y-a.y-fraction*dy);
+}
+function showTooltip(event) {
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const node = [...visiblePoints].reverse().find(point =>
+    Math.hypot(point.x-x,point.y-y) <= Math.max(8,point.radius+3));
+  const filePoint = !codeGraph && !node ? filePointAt(x,y) : null;
+  const file = filePoint?.file;
+  const directory = !codeGraph && !node && !file && visibleDirectories.find(point =>
+    Math.hypot(point.x-x,point.y-y) <= point.radius+3)?.entry;
+  if (directory) {
+    const refs = directory.internal+directory.external;
+    tooltip.textContent = directory.path+"\n"+(directory.layer?.name ?? "レイヤー未分類")+
+      (refs ? "\n内部 "+directory.internal+" / 境界をまたぐ "+directory.external+
+        " · 内部比率 "+Math.round(directory.cohesion*100)+"%" : "\n解決済みのファイル間参照なし");
+  } else if (file) {
+    tooltip.textContent = file.label+(file.removed ? "\n現在のスナップショットにないファイル" : filePoint.isChanged ? "\n変更ファイル" : "")+
+      (file.owner.layer ? "\n"+file.owner.layer.name : "");
+  } else if (node && codeGraph) {
+    const item = node.index ? codeGraph.neighbors[node.index-1] : codeGraph.root;
+    tooltip.textContent = item.label+"\n"+item.path+":"+item.line+(item.text ? "\n"+item.text : "");
+  } else if (node) {
+    const crate = nodes[node.index];
+    const dependencies = activeEdges();
+    const outgoing = dependencies.filter(([from]) => from === node.index).length;
+    const incoming = dependencies.filter(([,to]) => to === node.index).length;
+    const hops = analysis?.distance.get(node.index);
+    tooltip.textContent = crate.name + "\n" + crate.path +
+      "\n直接の依存先 " + outgoing + " 件 ／ 依存元 " + incoming + " 件" +
+      (hops === undefined ? "" : "\n選択中のクレートから " + hops + " ホップ");
+  } else {
+    let closest = 6;
+    let hit;
+    for (const edge of visibleEdges) {
+      const distance = distanceToSegment(x,y,points[edge[0]],points[edge[1]]);
+      if (distance <= closest) {
+        closest = distance;
+        hit = edge;
+      }
+    }
+    let review;
+    for (const edge of visibleReviewEdges) {
+      const distance = distanceToSegment(x,y,edge.a,edge.b);
+      if (distance <= closest) {
+        closest = distance;
+        review = edge;
+      }
+    }
+    if (review) {
+      tooltip.textContent = review.source.label+" → "+review.target.label+
+        (review.change ? "\n"+(review.kind === "added" ? "追加参照シンボル "+review.count+" 件" : review.kind === "removed"
+          ? "削除参照シンボル "+review.count+" 件" : "現在の依存") : "\n"+review.source.owner.layer.name+" → "+review.target.owner.layer.name);
+    } else {
+      if (!hit) {
+        hideTooltip();
+        return;
+      }
+      const [from,to,kinds] = hit;
+      if (codeGraph) {
+        if (codeGraph.fileDependencies) {
+          const source = from === 0 ? codeGraph.root : codeGraph.neighbors[from-1];
+          const target = to === 0 ? codeGraph.root : codeGraph.neighbors[to-1];
+          tooltip.textContent = source.label+" → "+target.label+" ("+kinds+" 件)";
+        } else {
+          const item = codeGraph.neighbors[to-1];
+          tooltip.textContent = codeGraph.root.label+" → "+item.label+
+            "\n"+(codeGraph.symbol ? codeGraph.indexed ? "Pion / SCIP で解決した参照" : "識別子の一致による参照候補" : "このファイルにある宣言");
+        }
+      } else {
+        const displayedKinds = elements.kind.value === "all" ? kinds : ["normal"];
+        tooltip.textContent = nodes[from].name + " → " + nodes[to].name +
+          "\n" + nodes[from].name + " が " + nodes[to].name + " に依存" +
+          "\n" + displayedKinds.map(kind => kindLabels[kind]).join("・") + "依存";
+      }
+    }
+  }
+  tooltip.hidden = false;
+  tooltip.style.left = Math.max(8,Math.min(x+14,rect.width-tooltip.offsetWidth-8))+"px";
+  const below = y+16;
+  tooltip.style.top = (below+tooltip.offsetHeight < rect.height ? below : Math.max(8,y-tooltip.offsetHeight-12))+"px";
+}
+const crateFilters = document.getElementById("crate-filters");
+const browseDetails = document.getElementById("browse-details");
+const browseSource = document.getElementById("browse-source");
+const detailsPanel = document.getElementById("details-panel");
+const sceneFooter = document.querySelector(".scene-footer");
+const pointers = new Map();
+let gesture = null;
+let openPanel = null;
+function setPanel(panel) {
+  openPanel = panel;
+  detailsPanel.hidden = panel !== "details";
+  sourceUI["source-panel"].hidden = panel !== "source";
+  browseDetails.setAttribute("aria-expanded",String(panel === "details"));
+  browseSource.setAttribute("aria-expanded",String(panel === "source"));
+}
+function renderGraphMode() {
+  const viewingCode = codeGraph !== null;
+  crateFilters.hidden = viewingCode;
+  browseDetails.hidden = viewingCode;
+  browseSource.hidden = viewingCode;
+  codeBack.hidden = !viewingCode;
+  sceneFooter.hidden = viewingCode;
+  graphSource.hidden = !codeGraph?.fileDependencies;
+  dependencyButton.hidden = viewingCode || currentFileId() === undefined;
+  draw();
+}
+document.addEventListener("keydown",event => {
+  if (event.key !== "Escape" || (!openPanel && !codeGraph)) return;
+  event.preventDefault();
+  if (codeGraph) closeCodeGraph();
+  else setPanel(null);
+});
+const sourceUI = Object.fromEntries(["source-panel","source-title","source-status","source-controls","file-query","source-file","source-symbol","source-path","source-lines"].map(id => [id,document.getElementById(id)]));
+const sourcePayload = JSON.parse(document.getElementById("source-snapshot").textContent);
+browseDetails.onclick = () => setPanel(openPanel === "details" ? null : "details");
+browseSource.onclick = () => {
+  if (openPanel === "source") {
+    setPanel(null);
+    return;
+  }
+  setPanel("source");
+  sourceUI["source-title"].focus({preventScroll:true});
+};
+let sourceCrate = null;
+let sourceFiles = {};
+const codeRelations = document.getElementById("code-relations");
+const symbolQuery = document.getElementById("symbol-query");
+const symbolTarget = document.getElementById("symbol-target");
+const symbolLinks = document.getElementById("symbol-links");
+const declaration = /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|unsafe|const)\s+)*(fn|struct|enum|trait|type|mod|const|static)\s+([A-Za-z_][A-Za-z0-9_]*)/;
+let declarations = [];
+function indexDeclarations() {
+  declarations = [];
+  for (const [path,source] of Object.entries(sourceFiles)) {
+    source.split("\n").forEach((line,index) => {
+      const match = line.match(declaration);
+      if (match) declarations.push({path,line:index+1,kind:match[1],name:match[2]});
+    });
+  }
+  declarations.sort((a,b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path) || a.line-b.line);
+}
+function showLine(path,line) {
+  if (sourceUI["source-file"].value !== path) {
+    sourceUI["file-query"].value = "";
+    filterFiles();
+    sourceUI["source-file"].value = path;
+    renderFile();
+  }
+  sourceUI["source-lines"].querySelector(".active")?.classList.remove("active");
+  const row = document.getElementById("source-line-"+line);
+  if (!row) return;
+  row.classList.add("active");
+  row.scrollIntoView({block:"nearest",inline:"nearest"});
+}
+function filterDeclarations() {
+  const query = symbolQuery.value.trim().toLowerCase();
+  const previous = symbolTarget.value;
+  symbolTarget.replaceChildren(new Option("宣言を選択…",""));
+  let shown = 0;
+  let total = 0;
+  declarations.forEach((item,index) => {
+    if (query && !(item.name+" "+item.path).toLowerCase().includes(query)) return;
+    total++;
+    if (shown >= 250 && String(index) !== previous) return;
+    symbolTarget.add(new Option(item.kind+" "+item.name+" · "+item.path+":"+item.line,index));
+    shown++;
+  });
+  symbolTarget.value = previous;
+  if (symbolTarget.selectedIndex < 0) symbolTarget.value = "";
+  if (!symbolTarget.value) symbolLinks.textContent = total > shown ?
+    total + " 件中 " + shown + " 件を表示。名前かパスで絞り込めます。" : total + " 件の宣言";
+}
+function showReferences() {
+  if (symbolTarget.value === "") {
+    filterDeclarations();
+    return;
+  }
+  const item = declarations[Number(symbolTarget.value)];
+  const identifier = new RegExp("\\b"+item.name+"\\b");
+  symbolLinks.replaceChildren();
+  function locationButton(path,line,label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.onclick = () => showLine(path,line);
+    return button;
+  }
+  symbolLinks.append(locationButton(item.path,item.line,"宣言 · "+item.path+":"+item.line));
+  const graphButton = document.createElement("button");
+  graphButton.type = "button";
+  graphButton.textContent = "この宣言の参照を3Dで見る";
+  graphButton.onclick = () => openCodeGraph(item.path,item);
+  symbolLinks.append(" ",graphButton);
+  const indexed = indexedReferences(sourceCrate,item.path,item.line);
+  const label = document.createElement("p");
+  const list = document.createElement("ul");
+  if (indexed) {
+    label.textContent = "Pion / SCIP で解決した参照 " + indexed.length + " 行" +
+      (indexed.length > 100 ? "（先頭100件）" : "");
+    for (const reference of indexed.slice(0,100)) {
+      const row = document.createElement("li");
+      const button = locationButton(reference.path,reference.line,reference.label);
+      button.onclick = () => jumpToReference(reference);
+      row.append(button);
+      list.append(row);
+    }
+    symbolLinks.append(label,list);
+    return;
+  }
+  const declarationSites = new Set(declarations.filter(entry => entry.name === item.name)
+    .map(entry => entry.path+":"+entry.line));
+  let count = 0;
+  for (const [path,source] of Object.entries(sourceFiles)) {
+    source.split("\n").forEach((line,index) => {
+      const number = index+1;
+      if (!identifier.test(line) || declarationSites.has(path+":"+number)) return;
+      count++;
+      if (count > 100) return;
+      const row = document.createElement("li");
+      row.append(locationButton(path,number,path+":"+number+" · "+line.trim().slice(0,160)));
+      list.append(row);
+    });
+  }
+  label.textContent = "参照候補 " + count + " 行" + (count > 100 ? "（先頭100件）" : "") +
+    " · 識別子の一致。別スコープの同名項目やコメントも含みます。";
+  symbolLinks.append(label,list);
+}
+symbolQuery.oninput = filterDeclarations;
+symbolTarget.onchange = showReferences;
+
+function openSource(index) {
+  if (index === sourceCrate) return;
+  sourceCrate = index;
+  if (index === null && openPanel === "source") setPanel(null);
+  sourceUI["source-controls"].hidden = true;
+  codeOpen.disabled = true;
+  dependencyButton.hidden = true;
+  sourceDependencyButton.hidden = true;
+  sourceUI["source-lines"].hidden = true;
+  sourceUI["source-path"].textContent = "";
+  sourceUI["file-query"].value = "";
+  sourceFiles = {};
+  declarations = [];
+  codeRelations.hidden = true;
+  symbolQuery.value = "";
+  symbolTarget.replaceChildren();
+  symbolLinks.replaceChildren();
+  if (index === null) return;
+  sourceUI["source-title"].textContent = nodes[index].name + " のソースコード";
+  const files = sourcePayload[index];
+  if (!files) {
+    sourceUI["source-status"].textContent = "収録されたRustファイルはありません。";
+    return;
+  }
+  sourceFiles = files;
+  indexDeclarations();
+  filterDeclarations();
+  codeRelations.hidden = false;
+  sourceUI["source-status"].textContent = Object.keys(files).length + " Rustファイル";
+  sourceUI["source-controls"].hidden = false;
+  filterFiles();
+}
+function filterFiles() {
+  const select = sourceUI["source-file"];
+  const previous = select.value;
+  const query = sourceUI["file-query"].value.trim().toLowerCase();
+  const paths = Object.keys(sourceFiles).filter(path => path.toLowerCase().includes(query)).sort();
+  select.replaceChildren(...paths.map(path => new Option(path,path)));
+  select.value = paths.includes(previous) ? previous :
+    ["src/lib.rs","src/main.rs"].find(path => paths.includes(path)) ?? paths[0] ?? "";
+  renderFile();
+}
+function renderFile() {
+  const path = sourceUI["source-file"].value;
+  const viewer = sourceUI["source-lines"];
+  const symbols = sourceUI["source-symbol"];
+  symbols.replaceChildren(new Option("宣言を選択…",""));
+  viewer.replaceChildren();
+  viewer.hidden = !path;
+  codeOpen.disabled = !path;
+  sourceDependencyButton.hidden = !path || currentFileId() === undefined;
+  dependencyButton.hidden = codeGraph !== null || sourceDependencyButton.hidden;
+  sourceUI["source-path"].textContent = path ? nodes[sourceCrate].path.replace(/Cargo[.]toml$/,"") + path : "一致するファイルがありません。";
+  if (!path) return;
+  const fragment = document.createDocumentFragment();
+  sourceFiles[path].split("\n").forEach((line,index) => {
+    const number = index+1;
+    const row = document.createElement("span");
+    row.className = "source-line";
+    row.id = "source-line-" + number;
+    const gutter = document.createElement("span");
+    gutter.className = "source-number";
+    gutter.textContent = number;
+    gutter.setAttribute("aria-hidden","true");
+    const code = document.createElement("code");
+    code.textContent = line;
+    row.append(gutter,code);
+    fragment.append(row);
+    const match = line.match(declaration);
+    if (match) symbols.add(new Option(match[1]+" "+match[2]+" ("+number+"行)",number));
+  });
+  viewer.append(fragment);
+  viewer.scrollTop = 0;
+  viewer.scrollLeft = 0;
+}
+sourceUI["file-query"].oninput = filterFiles;
+sourceUI["source-file"].onchange = renderFile;
+sourceUI["source-symbol"].onchange = event => {
+  if (!event.target.value) return;
+  const line = Number(event.target.value);
+  const path = sourceUI["source-file"].value;
+  const index = declarations.findIndex(item => item.path === path && item.line === line);
+  if (index >= 0) {
+    codeRelations.open = true;
+    symbolQuery.value = "";
+    if (![...symbolTarget.options].some(option => option.value === String(index))) {
+      const item = declarations[index];
+      symbolTarget.add(new Option(item.kind+" "+item.name+" · "+path+":"+line,index));
+    }
+    symbolTarget.value = String(index);
+    showReferences();
+  }
+  showLine(path,line);
+};
+let analysis = null;
+let routeEnd = null;
+let routeNodes = new Set();
+function activeEdges() {
+  return elements.kind.value === "all" ? edges : edges.filter(edge => edge[2].includes("normal"));
+}
+function traverse(start, mode, dependencies) {
+  const reverse = mode === "impact";
+  const adjacent = new Map();
+  for (const [from,to] of dependencies) {
+    const [parent,child] = reverse ? [to,from] : [from,to];
+    if (!adjacent.has(parent)) adjacent.set(parent, []);
+    adjacent.get(parent).push(child);
+  }
+  const parents = new Map([[start,null]]);
+  const distance = new Map([[start,0]]);
+  const queue = [start];
+  for (let cursor=0; cursor<queue.length; cursor++) {
+    const parent = queue[cursor];
+    for (const child of adjacent.get(parent) ?? []) {
+      if (parents.has(child)) continue;
+      parents.set(child,parent);
+      distance.set(child,distance.get(parent)+1);
+      queue.push(child);
+    }
+  }
+  return {parents,distance,queue,reverse};
+}
+function selectedRoute() {
+  const route = [];
+  for (let index=routeEnd; index != null; index=analysis.parents.get(index)) route.unshift(index);
+  return route;
+}
+function appendText(tag, value) {
+  const element = document.createElement(tag);
+  element.textContent = value;
+  elements.details.append(element);
+  return element;
+}
+function renderAnalysis() {
+  const route = selectedRoute();
+  const direct = [...analysis.distance.values()].filter(distance => distance === 1).length;
+  const count = analysis.queue.length - 1;
+  appendText("h3", analysis.reverse ? "静的な変更影響" : "間接依存を含む依存先");
+  appendText("p", count + " クレート（直接 " + direct + "、間接 " + (count-direct) + "）");
+  const byGroup = new Map();
+  for (const index of analysis.queue.slice(1)) {
+    const group = nodes[index].group;
+    byGroup.set(group,(byGroup.get(group) ?? 0)+1);
+  }
+  if (count) appendText("p",[...byGroup].sort((a,b) => b[1]-a[1]).map(([group,total]) => group+" "+total).join("  ·  "));
+  if (!route.length) return;
+  appendText("h3","最短経路 · "+(route.length-1)+" ホップ");
+  const list = appendText("ol","");
+  for (const index of route) {
+    const item = document.createElement("li");
+    item.textContent = nodes[index].name;
+    list.append(item);
+  }
+}
+const radians = degrees => degrees * Math.PI / 180;
+
+groups.forEach(group => {
+  const count = nodes.filter(node => node.group === group).length;
+  const label = group + " (" + count + ")";
+  elements.group.add(new Option(label, group));
+  const key = document.createElement("span");
+  key.style.setProperty("--color", colors[group]);
+  key.textContent = label;
+  elements.legend.append(key);
+});
+function updateOptions() {
+  const query = elements.search.value.trim().toLowerCase();
+  matches = new Set(nodes.flatMap((node, index) =>
+    (!elements.group.value || node.group === elements.group.value) &&
+    (node.name + " " + node.path).toLowerCase().includes(query) ? [index] : []));
+  elements.crate.replaceChildren(new Option("選択…", ""));
+  for (const index of matches) elements.crate.add(new Option(nodes[index].name, index));
+  if (!matches.has(selected)) selected = null;
+  renderSelection();
+}
+function choose(index) {
+  if (index !== null && !matches.has(index)) {
+    elements.group.value = "";
+    elements.search.value = "";
+    updateOptions();
+  }
+  selected = index;
+  renderSelection();
+}
+function renderSelection() {
+  elements.crate.value = selected ?? "";
+  openSource(selected);
+  browseSource.disabled = selected === null;
+  const mode = elements.mode.value;
+  analysis = selected !== null && mode !== "direct" ? traverse(selected,mode,activeEdges()) : null;
+  if (!analysis || !analysis.parents.has(routeEnd) || routeEnd === selected) routeEnd = null;
+  routeNodes = new Set(analysis ? selectedRoute() : []);
+  elements["route-label"].hidden = !analysis || analysis.queue.length < 2;
+  elements.route.replaceChildren(new Option("終点を選択…",""));
+  if (analysis) {
+    for (const index of analysis.queue.slice(1)) {
+      elements.route.add(new Option(nodes[index].name+" · "+analysis.distance.get(index)+" ホップ",index));
+    }
+  }
+  elements.route.value = routeEnd ?? "";
+  const title = document.createElement("h2");
+  title.textContent = selected === null ? "クレート詳細" : nodes[selected].name;
+  elements.details.replaceChildren(title);
+  if (selected === null) {
+    const text = document.createElement("p");
+    text.textContent = matches.size + " 件表示。クレートを選ぶと依存関係を確認できます。";
+    elements.details.append(text);
+  } else {
+    const path = document.createElement("code");
+    path.textContent = nodes[selected].path;
+    elements.details.append(path);
+    const browse = document.createElement("p");
+    const link = document.createElement("a");
+    link.href = "#source-panel";
+    link.textContent = "ソースコードを見る";
+    link.onclick = event => {
+      event.preventDefault();
+      browseSource.click();
+    };
+    browse.append(link);
+    elements.details.append(browse);
+    if (analysis) {
+      renderAnalysis();
+      draw();
+      return;
+    }
+    for (const [label, from, to] of [["依存先",0,1],["依存元",1,0]]) {
+      const heading = document.createElement("h3");
+      const related = activeEdges().filter(edge => edge[from] === selected);
+      heading.textContent = label + " (" + related.length + ")";
+      elements.details.append(heading);
+      const list = document.createElement("ul");
+      for (const edge of related) {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.textContent = nodes[edge[to]].name;
+        button.onclick = () => choose(edge[to]);
+        item.append(button, " " + edge[2].map(kind => ({normal:"通常",dev:"開発",build:"ビルド"})[kind]).join("・"));
+        list.append(item);
+      }
+      elements.details.append(list);
+    }
+  }
+  draw();
+}
+function draw() {
+  hideTooltip();
+  visiblePoints = [];
+  visibleFilePoints = [];
+  visibleDirectories = [];
+  visibleReviewEdges = [];
+  visibleEdges = [];
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const scale = Math.min(width,height) * (codeGraph ? 0.28*localZoom : 0.22*camera.zoom) / 100;
+  const focalLength = codeGraph ? 3.8 : 6.8;
+  const panX = codeGraph ? 0 : camera.panX;
+  const panY = codeGraph ? 0 : camera.panY;
+  const yaw = radians(camera.yaw);
+  const pitch = radians(camera.pitch);
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  ctx.scale(ratio, ratio);
+  const neighborhood = new Set(analysis ? analysis.queue : [selected]);
+  for (const [from,to] of activeEdges()) {
+    if (from === selected) neighborhood.add(to);
+    if (to === selected) neighborhood.add(from);
+  }
+  function project(x,y,z) {
+    const across = x * Math.cos(yaw) - z * Math.sin(yaw);
+    const depth = x * Math.sin(yaw) + z * Math.cos(yaw);
+    const vertical = y * Math.cos(pitch) - depth * Math.sin(pitch);
+    const distance = y * Math.sin(pitch) + depth * Math.cos(pitch);
+    const perspective = focalLength / (focalLength - distance);
+    return {x:width/2 + panX + across*scale*perspective, y:height/2 + panY - vertical*scale*perspective, distance, perspective};
+  }
+  if (codeGraph) {
+    drawCodeGraph(project,width,height);
+    return;
+  }
+  workspaceFileGraph ??= buildWorkspaceFileGraph();
+  const {cratePositions} = workspaceFileGraph;
+  const changeView = elements["structure-view"].value === "changes";
+  const changeScope = changeView ? currentChangeScope() : null;
+  changeFileLabel.hidden = !changeView || !workspaceFileGraph.changed.size;
+  changeEdgeLabel.hidden = !changeView || !dependency_changes;
+  mapHelp.hidden = changeView;
+  changeSummary.hidden = !changeView;
+  if (changeView) {
+    const {changed,affected,changeConnections} = changeScope;
+    const missing = changed_rust_paths.length-workspaceFileGraph.changed.size;
+    const added = changeConnections.filter(edge => edge[2] === "added").length;
+    const removed = changeConnections.filter(edge => edge[2] === "removed").length;
+    changeSummary.textContent = changed.size || affected.size
+      ? "変更 "+changed.size+" ファイル · "+changeConnections.length+" 本"
+      : "マップに表示できる変更Rustファイルがありません。";
+    changeSummary.textContent += dependency_changes
+      ? " ｜ 緑は追加 "+added+" 本、赤の破線は削除 "+removed+" 本、青は現在の周辺依存"
+      : " ｜ 青は依存元、緑は依存先。増減の比較には --base-scip が必要です";
+    if (missing) changeSummary.textContent += " ｜ スナップショットにない変更 "+missing+" 件";
+  }
+  points = cratePositions.map((position,index) => ({...project(...position),index}));
+  function line(a,b,color,opacity,dashed=false) {
+    ctx.globalAlpha = opacity;
+    ctx.strokeStyle = color;
+    ctx.setLineDash(dashed ? [4,4] : []);
+    ctx.beginPath();
+    ctx.moveTo(a.x,a.y);
+    ctx.lineTo(b.x,b.y);
+    ctx.stroke();
+  }
+  const floor = -1.4;
+  const gridExtent = 3;
+  for (let i=-4;i<=4;i++) {
+    const coordinate=i*gridExtent/4;
+    const opacity = i === 0 ? 0.34 : Math.abs(i) === 4 ? 0.26 : 0.14;
+    line(project(-gridExtent,floor,coordinate),project(gridExtent,floor,coordinate),"#7399bf",opacity);
+    line(project(coordinate,floor,-gridExtent),project(coordinate,floor,gridExtent),"#7399bf",opacity);
+  }
+  drawWorkspaceFiles(project,changeScope);
+  if (!changeView && selected !== null) {
+    const [x,,z] = cratePositions[selected];
+    const foot = project(x,floor,z);
+    line(foot,points[selected],"#a9d2ff",0.65,true);
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = "#a9d2ff";
+    ctx.beginPath();
+    ctx.ellipse(foot.x,foot.y,5,2,0,0,Math.PI*2);
+    ctx.fill();
+  }
+  for (const edge of elements["structure-view"].value === "all" ? activeEdges() : []) {
+    const [from,to] = edge;
+    if (analysis) {
+      const [parent,child] = analysis.reverse ? [to,from] : [from,to];
+      if (analysis.parents.get(child) === parent) {
+        visibleEdges.push(edge);
+        const onRoute = routeNodes.has(parent) && routeNodes.has(child);
+        line(points[from],points[to],onRoute ? "#fff2a8" : colors[nodes[selected].group],onRoute ? 1 : routeNodes.size ? 0.18 : 0.52,analysis.reverse);
+      }
+      continue;
+    }
+    const related = from === selected || to === selected;
+    if (!related && (selected !== null || !matches.has(from) || !matches.has(to))) continue;
+    visibleEdges.push(edge);
+    line(points[from],points[to],related ? colors[nodes[selected].group] : "#91a9c7",related ? 0.92 : 0.16,to === selected);
+  }
+  for (const point of [...points].sort((a,b) => a.distance-b.distance)) {
+    const {index} = point;
+    if (changeView ? !changeScope.affectedCrates.has(index) : !matches.has(index) && !neighborhood.has(index)) continue;
+    const highlighted = index === selected;
+    const opacity = changeView ? 0.28 : highlighted ? 1 : depthLight(point.distance) * (selected === null || neighborhood.has(index) ? 1 : 0.32);
+    const color = routeNodes.has(index) ? "#fff2a8" : colors[nodes[index].group];
+    const radius = markerRadius(point,highlighted ? 9 : 5.5);
+    if (!changeView) visiblePoints.push({...point,radius});
+    drawMarker(point,radius,color,opacity,!changeView && highlighted);
+  }
+  if (!changeView) {
+    const connected = new Set();
+    for (const [from,to] of visibleEdges) {
+      if (from === selected) connected.add(to);
+      if (to === selected) connected.add(from);
+    }
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#0b1321";
+    const occupied = [];
+    const neighbors = [...connected].sort((a,b) =>
+      Number(routeNodes.has(b))-Number(routeNodes.has(a)) || points[b].distance-points[a].distance);
+    const clusters = visiblePoints.filter(({index}) => index !== selected && !connected.has(index) &&
+      (camera.zoom >= 150 || workspaceFileGraph.crateFiles[index].length >= 8))
+      .sort((a,b) => workspaceFileGraph.crateFiles[b.index].length-workspaceFileGraph.crateFiles[a.index].length)
+      .map(point => point.index);
+    const ordered = [...(selected === null ? [] : [selected]),...neighbors,...clusters];
+    for (const index of ordered) {
+      const point = points[index];
+      const {x,y} = point;
+      if (x < 0 || x > width || y < 0 || y > height) continue;
+      const name = nodes[index].name;
+      const active = index === selected;
+      const fontSize = labelFontSize(point,active ? 15 : 12);
+      ctx.font = (active ? "600 " : "")+fontSize+"px system-ui";
+      ctx.fillStyle = active ? "#f3f7fd" : connected.has(index) ? "#d3def0" : colors[nodes[index].group];
+      const offset = markerRadius(point,active ? 9 : 5.5)+5;
+      const labelWidth = Math.min(ctx.measureText(name).width,width-12);
+      const labelHeight = Math.ceil(fontSize*1.25);
+      const options = [
+        [x+offset,y-offset],
+        [x-offset-labelWidth,y-offset],
+        [x+offset,y+offset+labelHeight/2],
+        [x-offset-labelWidth,y+offset+labelHeight/2]
+      ];
+      const placements = options.map(([left,baseline]) => ({
+        left:Math.max(6,Math.min(left,width-labelWidth-6)),
+        bottom:Math.max(labelHeight,Math.min(baseline,height-4))
+      }));
+      const placement = placements.find(({left,bottom}) => occupied.every(other =>
+        left+labelWidth+4 < other.left || left > other.right+4 ||
+        bottom+3 < other.top || bottom-labelHeight > other.bottom+3));
+      if (!placement) continue;
+      const {left,bottom} = placement;
+      occupied.push({left,bottom,right:left+labelWidth,top:bottom-labelHeight});
+      ctx.strokeText(name,left,bottom,width-12);
+      ctx.fillText(name,left,bottom,width-12);
+    }
+  }
+}
+elements.mode.onchange = () => { routeEnd = null; renderSelection(); };
+elements.kind.onchange = renderSelection;
+elements["structure-view"].onchange = draw;
+elements.route.onchange = () => {
+  routeEnd = elements.route.value === "" ? null : Number(elements.route.value);
+  renderSelection();
+};
+elements.group.onchange = updateOptions;
+elements.search.oninput = updateOptions;
+elements.crate.onchange = () => choose(elements.crate.value === "" ? null : Number(elements.crate.value));
+function orbit(horizontal,vertical) {
+  const yaw = camera.yaw+horizontal;
+  camera.yaw = ((yaw+180)%360+360)%360-180;
+  camera.pitch = Math.max(-80,Math.min(80,camera.pitch+vertical));
+}
+function zoomBy(factor) {
+  if (codeGraph) localZoom = Math.max(60,Math.min(220,localZoom*factor));
+  else camera.zoom = Math.max(45,Math.min(700,camera.zoom*factor));
+}
+canvas.addEventListener("wheel",event => {
+  event.preventDefault();
+  const units = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? canvas.clientHeight : 1;
+  if (event.ctrlKey || event.metaKey) {
+    zoomBy(Math.exp(-event.deltaY*units*0.004));
+  } else {
+    orbit(event.deltaX*units*0.35,-event.deltaY*units*0.35);
+  }
+  draw();
+},{passive:false});
+function pointerFrame() {
+  const [first,second] = pointers.values();
+  if (!second) return {...first,distance:0};
+  return {x:(first.x+second.x)/2,y:(first.y+second.y)/2,distance:Math.hypot(first.x-second.x,first.y-second.y)};
+}
+canvas.onpointerdown = event => {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  hideTooltip();
+  canvas.setPointerCapture(event.pointerId);
+  pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+  if (!gesture) {
+    const frame = pointerFrame();
+    gesture = {start:frame,previous:frame,moved:false};
+  } else {
+    gesture.previous = pointerFrame();
+    gesture.moved = true;
+  }
+};
+canvas.onpointermove = event => {
+  if (!gesture) {
+    if (event.pointerType !== "touch") showTooltip(event);
+    return;
+  }
+  if (!pointers.has(event.pointerId)) return;
+  pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+  const frame = pointerFrame();
+  if (Math.hypot(frame.x-gesture.start.x,frame.y-gesture.start.y)>4) gesture.moved = true;
+  if (!gesture.moved) return;
+  const {previous} = gesture;
+  const dx = frame.x-previous.x;
+  const dy = frame.y-previous.y;
+  if (event.shiftKey && !codeGraph) {
+    camera.panX += dx;
+    camera.panY += dy;
+  } else {
+    orbit(dx*0.55,dy*0.38);
+  }
+  if (previous.distance>5 && frame.distance>5) zoomBy(frame.distance/previous.distance);
+  gesture.previous = frame;
+  draw();
+};
+function finishPointer(event,selectPoint) {
+  if (!pointers.delete(event.pointerId)) return;
+  if (pointers.size) {
+    gesture.previous = pointerFrame();
+    return;
+  }
+  if (gesture && !gesture.moved && selectPoint) {
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX-rect.left;
+    const y = event.clientY-rect.top;
+    const nearby = visiblePoints.filter(point => (codeGraph || matches.has(point.index)) &&
+      Math.hypot(point.x-x,point.y-y)<(codeGraph ? Math.max(12,point.radius+3) : point.radius+3));
+    const file = !codeGraph && !nearby.length ? filePointAt(x,y)?.file : null;
+    nearby.sort((a,b) => b.distance-a.distance);
+    if (nearby.length && codeGraph) {
+      activateCodeNode(nearby[0].index);
+    } else if (nearby.length) {
+      choose(nearby[0].index);
+    } else if (file && !file.removed) {
+      jumpToReference(file);
+    }
+  }
+  gesture = null;
+}
+canvas.onpointerup = event => finishPointer(event,true);
+canvas.onpointerleave = hideTooltip;
+canvas.onpointercancel = event => finishPointer(event,false);
+canvas.onlostpointercapture = event => finishPointer(event,false);
+new ResizeObserver(draw).observe(canvas);
+updateOptions();
+const impact = nodes.map((node,index) => traverse(index,"impact",activeEdges()).queue.length-1);
+const greatestImpact = impact.indexOf(Math.max(...impact));
+elements.mode.value = "impact";
+choose(greatestImpact);
+renderGraphMode();
+</script>
+</body>
+</html>
