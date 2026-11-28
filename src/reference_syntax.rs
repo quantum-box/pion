@@ -63,12 +63,22 @@ impl ReferenceSyntax {
     }
 
     pub(crate) fn kind(&self, at: Position) -> ReferenceKind {
-        self.spans
-            .iter()
-            .filter(|(span, _)| span.contains(at))
-            .map(|(_, kind)| *kind)
-            .max()
-            .unwrap_or_default()
+        let mut registration = false;
+        let mut metadata_consumer = false;
+        for (_, kind) in self.spans.iter().filter(|(span, _)| span.contains(at)) {
+            match kind {
+                ReferenceKind::Metadata => return ReferenceKind::Metadata,
+                ReferenceKind::Registration => registration = true,
+                ReferenceKind::MetadataConsumer => metadata_consumer = true,
+                ReferenceKind::Ordinary => {}
+            }
+        }
+        match (registration, metadata_consumer) {
+            (true, true) => ReferenceKind::Metadata,
+            (true, false) => ReferenceKind::Registration,
+            (false, true) => ReferenceKind::MetadataConsumer,
+            (false, false) => ReferenceKind::Ordinary,
+        }
     }
 }
 
@@ -224,15 +234,33 @@ impl<'ast> Visit<'ast> for ReferenceSyntax {
 // Keep signature, attributes, closing and opening brace lines conservative.
 pub fn within_function_bodies(source: &str, changed: &[ChangedLine]) -> bool {
     #[derive(Default)]
-    struct Bodies(Vec<Range>);
+    struct Bodies {
+        bodies: Vec<Range>,
+        nested_items: Vec<Range>,
+    }
+
+    impl Bodies {
+        fn add(&mut self, block: &syn::Block) {
+            use syn::spanned::Spanned;
+
+            struct NestedItems<'a>(&'a mut Vec<Range>);
+            impl<'ast> Visit<'ast> for NestedItems<'_> {
+                fn visit_item(&mut self, item: &'ast syn::Item) {
+                    self.0.push(range(item.span(), item.span()));
+                }
+            }
+
+            let brace = block.brace_token.span;
+            self.bodies.push(range(brace.open(), brace.close()));
+            NestedItems(&mut self.nested_items).visit_block(block);
+        }
+    }
     impl<'ast> Visit<'ast> for Bodies {
         fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
-            let brace = item.block.brace_token.span;
-            self.0.push(range(brace.open(), brace.close()));
+            self.add(&item.block);
         }
         fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
-            let brace = item.block.brace_token.span;
-            self.0.push(range(brace.open(), brace.close()));
+            self.add(&item.block);
         }
     }
     let Ok(file) = syn::parse_file(source) else {
@@ -242,10 +270,15 @@ pub fn within_function_bodies(source: &str, changed: &[ChangedLine]) -> bool {
     bodies.visit_file(&file);
     !changed.is_empty()
         && changed.iter().all(|line| {
-            bodies.0.iter().any(|body| match line.gap_to {
+            let inside_body = bodies.bodies.iter().any(|body| match line.gap_to {
                 Some(next) => body.start.line <= line.line && next <= body.end.line,
                 None => body.start.line < line.line && line.line < body.end.line,
-            })
+            });
+            inside_body
+                && !bodies.nested_items.iter().any(|item| {
+                    item.start.line <= line.gap_to.unwrap_or(line.line)
+                        && line.line <= item.end.line
+                })
         })
 }
 
@@ -276,6 +309,42 @@ mod tests {
         assert_eq!(kind(3, "routes_router"), ReferenceKind::MetadataConsumer);
         assert_eq!(kind(6, "handler"), ReferenceKind::Registration);
         assert_eq!(kind(7, "handler"), ReferenceKind::Ordinary);
+    }
+
+    #[test]
+    fn inline_routes_read_only_as_metadata_are_metadata_edges() {
+        let source = concat!(
+            "fn doc() {\n",
+            "    let router = OpenApiRouter::new().routes(utoipa_axum::routes!(handler));\n",
+            "    let _ = router.get_openapi();\n",
+            "}\n",
+        );
+        let syntax = ReferenceSyntax::parse(source);
+        let column = source.lines().nth(1).unwrap().find("handler").unwrap() as u32;
+        assert_eq!(
+            syntax.kind(Position { line: 1, column }),
+            ReferenceKind::Metadata
+        );
+    }
+
+    #[test]
+    fn local_items_do_not_make_their_attributes_or_signatures_body_edits() {
+        let source = concat!(
+            "fn router() {\n",
+            "    #[utoipa::path(get, path = \"/test\")]\n",
+            "    fn handler() {}\n",
+            "    handler();\n",
+            "}\n",
+        );
+        let line = |line| ChangedLine {
+            line,
+            gap_to: None,
+            text: None,
+            addition_only: false,
+        };
+        assert!(!within_function_bodies(source, &[line(1)]));
+        assert!(!within_function_bodies(source, &[line(2)]));
+        assert!(within_function_bodies(source, &[line(3)]));
     }
 
     #[test]
