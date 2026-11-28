@@ -9,6 +9,7 @@ use pion::lockfile::Lockfile;
 use pion::manifest::ManifestChange;
 use pion::reach::{LockPair, Reach, ReachReason};
 use pion::scip::Index;
+use pion::symbols::SelectionLevel;
 use pion::{
     ChangeSet, FallbackCause, Narrowing, Planner, Reason, ReferenceGraph, RepoPath, ScenarioReason,
     Selection, TestPlan, WorkspaceGraph, audit, records, scenario,
@@ -99,6 +100,9 @@ struct Selecting {
     /// index, built once for a commit, serve every change made on top of it
     #[arg(long, value_enum, default_value_t = Indexed::Head, alias = "refs-revision")]
     scip_revision: Indexed,
+    /// For SCIP body-only changes, drop metadata or also router registration paths.
+    #[arg(long, value_enum, default_value_t = Level::All)]
+    min_level: Level,
     /// A directory of API scenario files to select from; repeatable
     #[arg(long = "scenarios", value_name = "DIR")]
     scenario_dirs: Vec<Utf8PathBuf>,
@@ -115,6 +119,16 @@ enum Indexed {
     Base,
     /// The working tree
     Head,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Level {
+    /// Keep every reference and all standard fallbacks.
+    All,
+    /// Skip metadata-only paths, keeping possible HTTP dispatch.
+    Runtime,
+    /// Also skip paths that rely on a router registration to reach the test.
+    Direct,
 }
 
 #[derive(clap::Args)]
@@ -690,7 +704,73 @@ fn select(args: &Selecting) -> Result<(ChangeSet, TestPlan), Failure> {
         two_revisions(&repository, &args.base, head, graph.root_manifest(), &paths)?
             .map(|(before, after)| ManifestChange::between(&before, &after));
 
-    let symbols = reference_graph(args.scip.as_deref(), args.refs.as_deref(), &graph)?;
+    let mut symbols = None;
+    if args.min_level != Level::All {
+        // Use both sides so changes to signatures and attributes cannot
+        // accidentally be treated as edits inside a body.
+        if let (Some(index), Indexed::Base) = (&args.scip, args.scip_revision)
+            && args.scenario_dirs.is_empty()
+        {
+            let base_lines = git::changed_lines(&repository, &args.base, head, Side::Base)?;
+            let head_lines = git::changed_lines(&repository, &args.base, head, Side::Head)?;
+            let mut body_only = !paths.is_empty();
+            for path in &paths {
+                let Some((before, after)) =
+                    two_revisions(&repository, &args.base, head, Some(path.clone()), &paths)?
+                else {
+                    body_only = false;
+                    break;
+                };
+                if !path
+                    .as_path()
+                    .extension()
+                    .is_some_and(|extension| extension == "rs")
+                    || !base_lines.get(path).is_some_and(|lines| {
+                        pion::reference_syntax::within_function_bodies(&before, lines)
+                    })
+                    || !head_lines.get(path).is_some_and(|lines| {
+                        pion::reference_syntax::within_function_bodies(&after, lines)
+                    })
+                {
+                    body_only = false;
+                    break;
+                }
+            }
+            if body_only {
+                let mut syntax_files = BTreeSet::new();
+                for needle in ["#[openapi", "routes!", "get_openapi"] {
+                    syntax_files.extend(git::files_containing(&repository, &args.base, needle)?);
+                }
+                let level = match args.min_level {
+                    Level::All => SelectionLevel::All,
+                    Level::Runtime => SelectionLevel::Runtime,
+                    Level::Direct => SelectionLevel::Direct,
+                };
+                let index = Index::decode(&std::fs::read(index)?)?;
+                symbols = Some(ReferenceGraph::build_with_source(
+                    &index,
+                    &graph,
+                    level,
+                    |path| {
+                        if syntax_files.contains(path) {
+                            git::file_at(&repository, &args.base, path).ok().flatten()
+                        } else {
+                            None
+                        }
+                    },
+                ));
+            }
+        }
+        if symbols.is_none() {
+            eprintln!(
+                "Pion: using all reference levels; requires base SCIP, a body-only diff, and no scenario selection"
+            );
+        }
+    }
+    let symbols = match symbols {
+        Some(symbols) => Some(symbols),
+        None => reference_graph(args.scip.as_deref(), args.refs.as_deref(), &graph)?,
+    };
     let lines = match &symbols {
         Some(_) => {
             let side = match args.scip_revision {

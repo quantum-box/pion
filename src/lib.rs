@@ -19,6 +19,7 @@ pub mod manifest;
 pub mod plan;
 pub mod reach;
 pub mod records;
+pub mod reference_syntax;
 pub mod routes;
 pub mod scenario;
 pub mod scip;
