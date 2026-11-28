@@ -30,3 +30,6 @@ thiserror = "2"
 # Reads the root manifest at two revisions, to tell which entries of
 # `[workspace.dependencies]` differ.
 toml = { version = "0.8", default-features = false, features = ["parse"] }
+# SCIP has positions, but no syntax for distinguishing registration from calls.
+proc-macro2 = { version = "1", features = ["span-locations"] }
+syn = { version = "2", features = ["full", "visit"] }

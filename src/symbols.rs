@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::change::RepoPath;
 use crate::records::Records;
+use crate::reference_syntax::{ReferenceKind, ReferenceSyntax};
 use crate::scip::{Index, Occurrence, Position, Range};
 use crate::workspace::{PackageName, WorkspaceGraph};
 
@@ -192,6 +193,10 @@ fn is_test_attribute(symbol: &str) -> bool {
 /// Which definition refers to which, for one workspace.
 #[derive(Debug, Default)]
 pub struct ReferenceGraph {
+    registration_dependents: BTreeMap<SymbolId, BTreeSet<SymbolId>>,
+    metadata_dependents: BTreeMap<SymbolId, BTreeSet<SymbolId>>,
+    metadata_consumers: BTreeMap<SymbolId, BTreeSet<SymbolId>>,
+    level: SelectionLevel,
     files: BTreeMap<RepoPath, FileSymbols>,
     /// Definition -> the definitions affected when it changes.
     dependents: BTreeMap<SymbolId, BTreeSet<SymbolId>>,
@@ -202,11 +207,32 @@ pub struct ReferenceGraph {
     unrecorded: BTreeSet<PackageName>,
 }
 
+/// Weakest reference evidence to keep for a verified body-only patch.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SelectionLevel {
+    #[default]
+    All,
+    Runtime,
+    Direct,
+}
+
 impl ReferenceGraph {
     /// Builds the graph from an index of the workspace `graph` describes.
     /// Files no workspace crate owns are left out.
     pub fn build(index: &Index, graph: &WorkspaceGraph) -> Self {
-        let mut built = Self::default();
+        Self::build_with_source(index, graph, SelectionLevel::All, |_| None)
+    }
+
+    pub fn build_with_source(
+        index: &Index,
+        graph: &WorkspaceGraph,
+        level: SelectionLevel,
+        read: impl Fn(&RepoPath) -> Option<String>,
+    ) -> Self {
+        let mut built = Self {
+            level,
+            ..Self::default()
+        };
         for document in &index.documents {
             let Some(path) = graph.repo_path(&document.relative_path) else {
                 continue;
@@ -214,7 +240,10 @@ impl ReferenceGraph {
             let Some(package) = graph.owner_of(&path).cloned() else {
                 continue;
             };
-            let file = built.add_document(&document.occurrences, &package);
+            let syntax = read(&path)
+                .map(|source| ReferenceSyntax::parse(&source))
+                .unwrap_or_default();
+            let file = built.add_document(&document.occurrences, &package, &syntax);
             built.files.insert(path, file);
         }
         built.link_trait_methods();
@@ -320,7 +349,12 @@ impl ReferenceGraph {
         built
     }
 
-    fn add_document(&mut self, occurrences: &[Occurrence], package: &PackageName) -> FileSymbols {
+    fn add_document(
+        &mut self,
+        occurrences: &[Occurrence],
+        package: &PackageName,
+        syntax: &ReferenceSyntax,
+    ) -> FileSymbols {
         let mut definitions = Vec::new();
         let mut mentions = Vec::new();
         for occurrence in occurrences {
@@ -414,7 +448,22 @@ impl ReferenceGraph {
                 continue;
             };
             if symbol != owner.symbol {
-                self.affects(&symbol, &owner.symbol);
+                let kind = syntax.kind(position);
+                let edges = match kind {
+                    ReferenceKind::Ordinary => &mut self.dependents,
+                    ReferenceKind::Registration if symbol.is_callable() => {
+                        &mut self.registration_dependents
+                    }
+                    ReferenceKind::Metadata if symbol.is_callable() => {
+                        &mut self.metadata_dependents
+                    }
+                    ReferenceKind::MetadataConsumer => &mut self.metadata_consumers,
+                    _ => &mut self.dependents,
+                };
+                edges
+                    .entry(symbol.clone())
+                    .or_default()
+                    .insert(owner.symbol.clone());
             }
             references.push(Reference {
                 range: mention.range,
@@ -544,18 +593,41 @@ impl ReferenceGraph {
     /// Every definition a change to `changed` can affect, the changed ones
     /// included, each with the changed definition it was reached from.
     pub fn affected_by(&self, changed: &BTreeSet<SymbolId>) -> BTreeMap<SymbolId, SymbolId> {
-        let mut origin: BTreeMap<SymbolId, SymbolId> = BTreeMap::new();
+        // A symbol may be reachable both through a registration and through
+        // a call. Keep both states so the stronger path cannot be masked.
+        let mut origin = BTreeMap::new();
+        let mut seen = BTreeSet::new();
         let mut queue = VecDeque::new();
         for symbol in changed {
-            origin.insert(symbol.clone(), symbol.clone());
-            queue.push_back(symbol.clone());
+            queue.push_back((symbol.clone(), symbol.clone(), false));
         }
-        while let Some(symbol) = queue.pop_front() {
-            let from = origin[&symbol].clone();
-            for dependent in self.dependents.get(&symbol).into_iter().flatten() {
-                if !origin.contains_key(dependent) {
-                    origin.insert(dependent.clone(), from.clone());
-                    queue.push_back(dependent.clone());
+        while let Some((symbol, from, registered)) = queue.pop_front() {
+            if !seen.insert((symbol.clone(), registered)) {
+                continue;
+            }
+            origin.entry(symbol.clone()).or_insert_with(|| from.clone());
+            for (edges, keep, next_registered) in [
+                (&self.dependents, true, registered),
+                (
+                    &self.registration_dependents,
+                    self.level != SelectionLevel::Direct,
+                    true,
+                ),
+                (
+                    &self.metadata_dependents,
+                    self.level == SelectionLevel::All,
+                    true,
+                ),
+                (
+                    &self.metadata_consumers,
+                    !registered || self.level == SelectionLevel::All,
+                    registered,
+                ),
+            ] {
+                if keep {
+                    for dependent in edges.get(&symbol).into_iter().flatten() {
+                        queue.push_back((dependent.clone(), from.clone(), next_registered));
+                    }
                 }
             }
         }
@@ -579,6 +651,50 @@ mod tests {
 
     fn symbol(descriptors: &str) -> SymbolId {
         SymbolId(format!("rust-analyzer cargo fx 0.0.0 {descriptors}"))
+    }
+
+    #[test]
+    fn levels_preserve_strong_paths_and_direct_metadata_dependencies() {
+        let changed = symbol("changed().");
+        let registered = symbol("router().");
+        let direct_test = symbol("direct_test().");
+        let metadata = symbol("metadata().");
+        let http_test = symbol("http_test().");
+        let attr = symbol("Doc#");
+        let mut graph = ReferenceGraph::default();
+        graph.affects(&changed, &direct_test);
+        graph.affects(&registered, &http_test);
+        graph.affects(&metadata, &direct_test);
+        graph
+            .registration_dependents
+            .insert(changed.clone(), BTreeSet::from([registered.clone()]));
+        graph
+            .metadata_dependents
+            .insert(changed.clone(), BTreeSet::from([attr.clone()]));
+        graph
+            .metadata_consumers
+            .insert(registered.clone(), BTreeSet::from([metadata.clone()]));
+
+        let edits = BTreeSet::from([changed.clone()]);
+        assert!(graph.affected_by(&edits).contains_key(&metadata));
+        graph.level = SelectionLevel::Runtime;
+        let runtime = graph.affected_by(&edits);
+        assert!(runtime.contains_key(&http_test));
+        assert!(runtime.contains_key(&direct_test));
+        assert!(!runtime.contains_key(&attr));
+        assert!(!runtime.contains_key(&metadata));
+        assert!(
+            graph
+                .affected_by(&BTreeSet::from([registered.clone()]))
+                .contains_key(&metadata)
+        );
+        graph.level = SelectionLevel::Direct;
+        let direct = graph.affected_by(&edits);
+        assert!(!direct.contains_key(&http_test));
+        assert!(direct.contains_key(&direct_test));
+        // Another reference to the same symbol pair may be a real call.
+        graph.affects(&changed, &registered);
+        assert!(graph.affected_by(&edits).contains_key(&http_test));
     }
 
     #[test]

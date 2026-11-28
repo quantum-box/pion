@@ -444,3 +444,28 @@ rather than by additional crates. State the reason when adding a dependency.
 ## License
 
 MIT
+
+### Reference levels for function-body edits
+
+`cargo pion plan --min-level runtime` is an opt-in SCIP refinement.
+The default `all` keeps all reference paths. `runtime` drops paths
+that reach a test only through OpenAPI metadata, such as a handler in
+`#[openapi(paths(...))]` or a registered router used solely through
+`get_openapi()`. It keeps paths through router registrations that can
+serve a request. `direct` also drops paths that require a recognized
+`OpenApiRouter.routes(routes!(...))` registration. It can miss tests that only
+reach a changed handler through HTTP dispatch, so use it for comparison
+against a full run. Unknown Rust syntax and references Pion cannot classify
+keep their original behavior.
+
+Both refinements require `--scip-revision base` with a matching SCIP and
+changes strictly inside function bodies on both revisions. Other changes,
+compiler-recorded references, and plans with scenarios use `all`. Normal
+crate-level fallbacks still apply. This is static evidence about references
+and does not prove that a test executes a particular branch.
+
+```sh
+cargo pion plan --base "$BASE" --head "$HEAD" --scip "$SCIP" \
+  --scip-revision base --min-level runtime --format json > plan.json
+cargo pion audit --plan plan.json --junit full-results.xml
+```
